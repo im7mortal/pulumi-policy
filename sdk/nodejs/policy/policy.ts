@@ -38,15 +38,19 @@ export class PolicyPack {
 /** A helper function that returns a strongly typed resource validation function. */
 export function typedResourceValidation<TResource extends Resource>(
     filter: (o: any) => o is TResource,
-    validate: (resource: q.ResolvedResource<TResource>, args: ResourceValidationArgs, reportViolation: ReportViolation) => Promise<void> | void,
+    validate: (args: TypedResourceValidationArgs<TResource>, reportViolation: ReportViolation) => Promise<void> | void,
 ): ResourceValidation {
     return (args: ResourceValidationArgs, reportViolation: ReportViolation) => {
         args.props.__pulumiType = args.type;
         if (filter(args.props) === false) {
             return;
         }
-        return validate(args.props, args, reportViolation);
+        return validate(args, reportViolation);
     };
+}
+
+export interface TypedResourceValidationArgs<TResource extends Resource> extends ResourceValidationArgs {
+    props: q.ResolvedResource<TResource>;
 }
 
 /**
