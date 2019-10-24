@@ -126,7 +126,7 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
 
                 try {
                     const deserd = deserializeProperties(req.getProperties());
-                    const args: ResourceValidationArgs<any> = {
+                    const args: ResourceValidationArgs = {
                         type: req.getType(),
                         props: unknownCheckingProxy(deserd),
                     };

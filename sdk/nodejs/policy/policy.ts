@@ -38,14 +38,14 @@ export class PolicyPack {
 /** A helper function that returns a strongly typed resource validation function. */
 export function typedResourceValidation<TResource extends Resource>(
     filter: (o: any) => o is TResource,
-    validate: (args: ResourceValidationArgs<q.ResolvedResource<TResource>>, reportViolation: ReportViolation) => Promise<void> | void,
+    validate: (resource: q.ResolvedResource<TResource>, args: ResourceValidationArgs, reportViolation: ReportViolation) => Promise<void> | void,
 ): ResourceValidation {
-    return (args: ResourceValidationArgs<any>, reportViolation: ReportViolation) => {
+    return (args: ResourceValidationArgs, reportViolation: ReportViolation) => {
         args.props.__pulumiType = args.type;
         if (filter(args.props) === false) {
             return;
         }
-        return validate(args, reportViolation);
+        return validate(args.props, args, reportViolation);
     };
 }
 
@@ -82,11 +82,11 @@ export interface ResourceValidationPolicy extends Policy {
     validateResource: ResourceValidation;
 }
 
-export type ResourceValidation = (args: ResourceValidationArgs<any>, reportViolation: ReportViolation) => Promise<void> | void;
+export type ResourceValidation = (args: ResourceValidationArgs, reportViolation: ReportViolation) => Promise<void> | void;
 
-export interface ResourceValidationArgs<TResource> {
+export interface ResourceValidationArgs {
     type: string;
-    props: TResource;
+    props: Record<string, any>;
 }
 
 export interface StackValidationPolicy extends Policy {
