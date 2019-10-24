@@ -12,17 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import * as pulumi from "@pulumi/pulumi";
 import { Resource } from "@pulumi/pulumi";
 import * as q from "@pulumi/pulumi/queryable";
 import { serve } from "./server";
 
 export interface PolicyPackArgs {
-    policies: Policy[];
+    policies: Policies;
 }
 
 export class PolicyPack {
-    private readonly policies: Policy[];
+    private readonly policies: Policies;
 
     constructor(private name: string, args: PolicyPackArgs) {
         this.policies = args.policies;
@@ -36,26 +35,19 @@ export class PolicyPack {
     }
 }
 
-/** A function that returns true if a resource definition violates some policy. */
-export type Rule = (type: string, properties: any) => void;
-
-export function typedRule<TResource extends pulumi.Resource>(
+/** A helper function that returns a strongly typed resource validation function. */
+export function typedResourceValidation<TResource extends Resource>(
     filter: (o: any) => o is TResource,
-    rule: (properties: q.ResolvedResource<TResource>) => void,
-): Rule {
-    return (type: string, properties: any) => {
-        properties.__pulumiType = type;
-        if (filter(properties) === false) {
+    validate: (args: ResourceValidationArgs<q.ResolvedResource<TResource>>, reportViolation: ReportViolation) => Promise<void> | void,
+): ResourceValidation {
+    return (args: ResourceValidationArgs<any>, reportViolation: ReportViolation) => {
+        args.props.__pulumiType = args.type;
+        if (filter(args.props) === false) {
             return;
         }
-        return rule(properties);
+        return validate(args, reportViolation);
     };
 }
-
-/**
- * A keyword or term to associate with a policy, such as "cost" or "security."
- */
-export type Tag = string;
 
 /**
  * Indicates the impact of a policy violation.
@@ -82,10 +74,39 @@ export interface Policy {
      * proper permissions.
      */
     enforcementLevel: EnforcementLevel;
-
-    /**
-     * Chain of rules that return true if a resource definition violates a policy (e.g., "S3 buckets
-     * can't be public"). Rules are applied in the order they are declared.
-     */
-    rules: Rule | Rule[];
 }
+
+export type Policies = (ResourceValidationPolicy | StackValidationPolicy)[];
+
+export interface ResourceValidationPolicy extends Policy {
+    validateResource: ResourceValidation;
+}
+
+export type ResourceValidation = (args: ResourceValidationArgs<any>, reportViolation: ReportViolation) => Promise<void> | void;
+
+export interface ResourceValidationArgs<TResource> {
+    type: string;
+    props: TResource;
+}
+
+export interface StackValidationPolicy extends Policy {
+    validateStack: StackValidation;
+}
+
+export type StackValidation = (args: StackValidationArgs, reportViolation: ReportViolation) => Promise<void> | void;
+
+export interface StackValidationArgs {
+    resources: PolicyResource[];
+}
+
+export interface PolicyResource {
+    type: string;
+    props: Record<string, any>;
+}
+
+export interface PolicyViolation {
+    message: string;
+    urn?: string;
+}
+
+export type ReportViolation = (violation: PolicyViolation) => void;

@@ -20,7 +20,15 @@ const plugproto = require("@pulumi/pulumi/proto/plugin_pb.js");
 import { AssertionError } from "assert";
 
 import { deserializeProperties } from "./deserialize";
-import { EnforcementLevel, Policy, Tag } from "./policy";
+import {
+    Policies,
+    Policy,
+    PolicyViolation,
+    ReportViolation,
+    ResourceValidationArgs,
+    ResourceValidationPolicy,
+    StackValidationPolicy,
+} from "./policy";
 import {
     asGrpcError,
     Diagnostic,
@@ -41,7 +49,7 @@ import { version } from "./version";
 
 let serving = false;
 
-export function serve(policyPackName: string, policyPackVersion: string, policies: Policy[]): void {
+export function serve(policyPackName: string, policyPackVersion: string, policies: Policies): void {
     if (serving !== false) {
         throw Error("Only one policy gRPC server can run per process");
     }
@@ -68,7 +76,7 @@ export function serve(policyPackName: string, policyPackVersion: string, policie
 function makeGetAnalyzerInfoRpcFun(
     policyPackName: string,
     policyPackVersion: string,
-    policies: Policy[],
+    policies: Policies,
 ) {
     return async function(call: any, callback: any): Promise<void> {
         try {
@@ -90,61 +98,60 @@ async function getPluginInfoRpc(call: any, callback: any): Promise<void> {
 }
 
 // analyze is the RPC call that will analyze an individual resource, one at a time (i.e., check).
-function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, policies: Policy[]) {
+function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, policies: Policies) {
     return async function(call: any, callback: any): Promise<void> {
         // Prep to perform the analysis.
         const req = call.request;
 
         // Run the analysis for every analyzer in the global list, tracking any diagnostics.
         const ds: Diagnostic[] = [];
+
         try {
             for (const p of policies) {
-                let policyRules = [];
-                if (Array.isArray(p.rules)) {
-                    policyRules = p.rules;
-                } else {
-                    policyRules = [p.rules];
+                if (!isResourcePolicy(p)) {
+                    continue;
                 }
 
-                for (const rule of policyRules) {
-                    try {
-                        const deserd = deserializeProperties(req.getProperties());
-                        rule(req.getType(), unknownCheckingProxy(deserd));
-                    } catch (e) {
-                        if (e instanceof UnknownValueError) {
-                            // `Diagnostic` is just an `AdmissionPolicy` without a `rule` field.
-                            const { rules, name, ...diag } = p;
+                const reportViolation: ReportViolation = (violation) => {
+                    const { validateResource, name, ...diag } = p;
 
-                            ds.push({
-                                policyName: name,
-                                policyPackName,
-                                policyPackVersion,
-                                message: `can't run policy '${name}' during preview: ${e.message}`,
-                                ...diag,
-                                enforcementLevel: "advisory",
-                            });
-                        } else if (e instanceof AssertionError) {
-                            // `Diagnostic` is just an `AdmissionPolicy` without a `rule` field.
-                            const { rules, name, ...diag } = p;
+                    ds.push({
+                        policyName: name,
+                        policyPackName,
+                        policyPackVersion,
+                        message: violation.message,
+                        ...diag,
+                    });
+                };
 
-                            const [expect, op, actual] = [e.expected, e.operator, e.actual];
-                            const expectation = `observed value '${expect}' was expected to ${op} '${actual}'`;
-                            const message = e.generatedMessage
-                                ? `[${name}] ${diag.description}\n${expectation}`
-                                : `[${name}] ${diag.description}\n${e.message}`;
+                try {
+                    const deserd = deserializeProperties(req.getProperties());
+                    const args: ResourceValidationArgs<any> = {
+                        type: req.getType(),
+                        props: unknownCheckingProxy(deserd),
+                    };
 
-                            ds.push({
-                                policyName: name,
-                                policyPackName,
-                                policyPackVersion,
-                                message: message,
-                                ...diag,
-                            });
-                        } else {
-                            throw asGrpcError(e, `Error validating resource with policy ${p.name}`);
-                        }
+                    // Pass the result of the validate call to Promise.resolve.
+                    // If the value is a promise, that promise is returned; otherwise
+                    // the returned promise will be fulfilled with the value.
+                    await Promise.resolve(p.validateResource(args, reportViolation));
+                } catch (e) {
+                    if (e instanceof UnknownValueError) {
+                        const { validateResource, name, ...diag } = p;
+
+                        ds.push({
+                            policyName: name,
+                            policyPackName,
+                            policyPackVersion,
+                            message: `can't run policy '${name}' during preview: ${e.message}`,
+                            ...diag,
+                            enforcementLevel: "advisory",
+                        });
+                    } else {
+                        throw asGrpcError(e, `Error validating resource with policy ${p.name}`);
                     }
                 }
+
             }
         } catch (err) {
             callback(err, undefined);
@@ -154,4 +161,8 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
         // Now marshal the results into a resulting diagnostics list, and invoke the callback to finish.
         callback(undefined, makeAnalyzeResponse(ds));
     };
+}
+
+function isResourcePolicy(p: Policy): p is ResourceValidationPolicy {
+    return typeof (p as ResourceValidationPolicy).validateResource === "function";
 }
