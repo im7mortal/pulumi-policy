@@ -119,7 +119,7 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
                         policyName: name,
                         policyPackName,
                         policyPackVersion,
-                        message: violation.message,
+                        message: isString(violation) ? violation : violation.message,
                         ...diag,
                     });
                 };
@@ -161,6 +161,10 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
         // Now marshal the results into a resulting diagnostics list, and invoke the callback to finish.
         callback(undefined, makeAnalyzeResponse(ds));
     };
+}
+
+function isString(v: string | PolicyViolation): v is string {
+    return typeof v === "string" || v instanceof String;
 }
 
 function isResourcePolicy(p: Policy): p is ResourceValidationPolicy {

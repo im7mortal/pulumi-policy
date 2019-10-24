@@ -109,4 +109,4 @@ export interface PolicyViolation {
     urn?: string;
 }
 
-export type ReportViolation = (violation: PolicyViolation) => void;
+export type ReportViolation = (violation: string | PolicyViolation) => void;
