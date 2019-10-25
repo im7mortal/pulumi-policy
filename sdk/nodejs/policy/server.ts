@@ -103,7 +103,6 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
 
         // Run the analysis for every analyzer in the global list, tracking any diagnostics.
         const ds: Diagnostic[] = [];
-
         try {
             for (const p of policies) {
                 if (!isResourcePolicy(p)) {
@@ -122,34 +121,39 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
                     });
                 };
 
-                try {
-                    const deserd = deserializeProperties(req.getProperties());
-                    const args: ResourceValidationArgs = {
-                        type: req.getType(),
-                        props: unknownCheckingProxy(deserd),
-                    };
+                const validations = Array.isArray(p.validateResource)
+                    ? p.validateResource
+                    : [p.validateResource];
 
-                    // Pass the result of the validate call to Promise.resolve.
-                    // If the value is a promise, that promise is returned; otherwise
-                    // the returned promise will be fulfilled with the value.
-                    await Promise.resolve(p.validateResource(args, reportViolation));
-                } catch (e) {
-                    if (e instanceof UnknownValueError) {
-                        const { validateResource, name, ...diag } = p;
+                for (const validation of validations) {
+                    try {
+                        const deserd = deserializeProperties(req.getProperties());
+                        const args: ResourceValidationArgs = {
+                            type: req.getType(),
+                            props: unknownCheckingProxy(deserd),
+                        };
 
-                        ds.push({
-                            policyName: name,
-                            policyPackName,
-                            policyPackVersion,
-                            message: `can't run policy '${name}' during preview: ${e.message}`,
-                            ...diag,
-                            enforcementLevel: "advisory",
-                        });
-                    } else {
-                        throw asGrpcError(e, `Error validating resource with policy ${p.name}`);
+                        // Pass the result of the validate call to Promise.resolve.
+                        // If the value is a promise, that promise is returned; otherwise
+                        // the returned promise will be fulfilled with the value.
+                        await Promise.resolve(validation(args, reportViolation));
+                    } catch (e) {
+                        if (e instanceof UnknownValueError) {
+                            const { validateResource, name, ...diag } = p;
+
+                            ds.push({
+                                policyName: name,
+                                policyPackName,
+                                policyPackVersion,
+                                message: `can't run policy '${name}' during preview: ${e.message}`,
+                                ...diag,
+                                enforcementLevel: "advisory",
+                            });
+                        } else {
+                            throw asGrpcError(e, `Error validating resource with policy ${p.name}`);
+                        }
                     }
                 }
-
             }
         } catch (err) {
             callback(err, undefined);

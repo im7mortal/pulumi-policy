@@ -16,10 +16,19 @@ import { Resource } from "@pulumi/pulumi";
 import * as q from "@pulumi/pulumi/queryable";
 import { serve } from "./server";
 
+/**
+ * The set of arguments for constructing a PolicyPack.
+ */
 export interface PolicyPackArgs {
+    /**
+     * The policies associated with a PolicyPack.
+     */
     policies: Policies;
 }
 
+/**
+ * A PolicyPack contains one or more policies to enforce.
+ */
 export class PolicyPack {
     private readonly policies: Policies;
 
@@ -35,22 +44,22 @@ export class PolicyPack {
     }
 }
 
-/** A helper function that returns a strongly typed resource validation function. */
-export function typedResourceValidation<TResource extends Resource>(
+/**
+ * A helper function that returns a strongly-typed resource validation function.
+ */
+export function validateTypedResource<TResource extends Resource>(
     filter: (o: any) => o is TResource,
-    validate: (args: TypedResourceValidationArgs<TResource>, reportViolation: ReportViolation) => Promise<void> | void,
+    validate: (
+        resource: q.ResolvedResource<TResource>,
+        args: ResourceValidationArgs,
+        reportViolation: ReportViolation) => Promise<void> | void,
 ): ResourceValidation {
     return (args: ResourceValidationArgs, reportViolation: ReportViolation) => {
         args.props.__pulumiType = args.type;
-        if (filter(args.props) === false) {
-            return;
+        if (filter(args.props)) {
+            return validate(args.props, args, reportViolation);
         }
-        return validate(args, reportViolation);
     };
-}
-
-export interface TypedResourceValidationArgs<TResource extends Resource> extends ResourceValidationArgs {
-    props: q.ResolvedResource<TResource>;
 }
 
 /**
@@ -80,32 +89,101 @@ export interface Policy {
     enforcementLevel: EnforcementLevel;
 }
 
+/**
+ * An array of Policies.
+ */
 export type Policies = (ResourceValidationPolicy | StackValidationPolicy)[];
 
+/**
+ * ResourceValidationPolicy is a policy that validates a resource definition.
+ */
 export interface ResourceValidationPolicy extends Policy {
-    validateResource: ResourceValidation;
+    /**
+     * A callback function that validates if a resource definition violates a policy (e.g. "S3 buckets
+     * can't be public"). A single callback function can be specified, or multiple functions, which are
+     * called in order.
+     */
+    validateResource: ResourceValidation | ResourceValidation[];
 }
 
+ /**
+  * ResourceValidation is the callback signature for a `ResourceValidationPolicy`. A resource validation
+  * is passed `args` with more information about the resource and a `reportViolation` callback that can be
+  * used to report a policy violation. `reportViolation` can be called multiple times to report multiple
+  * violations against the same resource. `reportViolation` must be passed a message about the violation.
+  * The `reportViolation` signature accepts an optional `urn` argument, which is ignored when validating
+  * resources (the `urn` of the resource being validated is always used).
+  */
 export type ResourceValidation = (args: ResourceValidationArgs, reportViolation: ReportViolation) => Promise<void> | void;
 
+/**
+ * ResourceValidationArgs is the argument bag passed to a resource validation.
+ */
 export interface ResourceValidationArgs {
+    /**
+     * The type of the Resource.
+     */
     type: string;
+
+    /**
+     * The properties of the Resource.
+     */
     props: Record<string, any>;
+
+    // TODO add support for the following:
+    // urn: string;
+    // name: string;
+    // opts: pulumi.ResourceOptions;
 }
 
+/**
+ * StackValidationPolicy is a policy that validates a stack.
+ */
 export interface StackValidationPolicy extends Policy {
+    /**
+     * A callback function that valids if a stack violates a policy.
+     */
     validateStack: StackValidation;
 }
 
+/**
+ * StackValidation is the callback signature for a `StackValidationPolicy`. A stack validation is passed
+ * `args` with more information about the stack and a `reportViolation` callback that can be used to
+ * report a policy violation. `reportViolation` can be called multiple times to report multiple violations
+ * against the stack. `reportViolation` must be passed a message about the violation, and an optional `urn`
+ * to a resource in the stack that's in violation of the policy. Not specifying a `urn` indicates the
+ * overall stack is in violation of the policy.
+ */
 export type StackValidation = (args: StackValidationArgs, reportViolation: ReportViolation) => Promise<void> | void;
 
+/**
+ * StackValidationArgs is the argument bag passed to a resource validation.
+ */
 export interface StackValidationArgs {
+    /**
+     * The resources in the stack.
+     */
     resources: PolicyResource[];
 }
 
+/**
+ * PolicyResource represents a resource in the stack.
+ */
 export interface PolicyResource {
+    /**
+     * The type of the Resource.
+     */
     type: string;
+
+    /**
+     * The outputs of the Resource.
+     */
     props: Record<string, any>;
+
+    // TODO add support for the following:
+    // urn: string;
+    // name: string;
+    // opts: pulumi.ResourceOptions;
 }
 
 export type ReportViolation = (message: string, urn?: string) => void;
