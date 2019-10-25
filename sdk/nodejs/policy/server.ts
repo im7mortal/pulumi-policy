@@ -23,11 +23,9 @@ import { deserializeProperties } from "./deserialize";
 import {
     Policies,
     Policy,
-    PolicyViolation,
     ReportViolation,
     ResourceValidationArgs,
     ResourceValidationPolicy,
-    StackValidationPolicy,
 } from "./policy";
 import {
     asGrpcError,
@@ -112,14 +110,14 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
                     continue;
                 }
 
-                const reportViolation: ReportViolation = (violation) => {
+                const reportViolation: ReportViolation = (message, urn) => {
                     const { validateResource, name, ...diag } = p;
 
                     ds.push({
                         policyName: name,
                         policyPackName,
                         policyPackVersion,
-                        message: isString(violation) ? violation : violation.message,
+                        message: message,
                         ...diag,
                     });
                 };
@@ -161,10 +159,6 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
         // Now marshal the results into a resulting diagnostics list, and invoke the callback to finish.
         callback(undefined, makeAnalyzeResponse(ds));
     };
-}
-
-function isString(v: string | PolicyViolation): v is string {
-    return typeof v === "string" || v instanceof String;
 }
 
 function isResourcePolicy(p: Policy): p is ResourceValidationPolicy {

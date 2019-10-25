@@ -108,9 +108,4 @@ export interface PolicyResource {
     props: Record<string, any>;
 }
 
-export interface PolicyViolation {
-    message: string;
-    urn?: string;
-}
-
-export type ReportViolation = (violation: string | PolicyViolation) => void;
+export type ReportViolation = (message: string, urn?: string) => void;
