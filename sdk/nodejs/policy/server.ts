@@ -16,11 +16,14 @@ const grpc = require("grpc");
 const analyzerrpc = require("@pulumi/pulumi/proto/analyzer_grpc_pb.js");
 const plugproto = require("@pulumi/pulumi/proto/plugin_pb.js");
 
+import { CustomTimeouts } from "@pulumi/pulumi";
+
 import { deserializeProperties } from "./deserialize";
 import {
     Policies,
     Policy,
     PolicyResource,
+    PolicyResourceOptions,
     ReportViolation,
     ResourceValidationArgs,
     ResourceValidationPolicy,
@@ -165,6 +168,7 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
                             props: unknownCheckingProxy(deserd),
                             urn: req.getUrn(),
                             name: req.getName(),
+                            opts: getResourceOptions(req),
                         };
 
                         // Pass the result of the validate call to Promise.resolve.
@@ -240,6 +244,7 @@ function makeAnalyzeStackRpcFun(policyPackName: string, policyPackVersion: strin
                             props: r.getProperties().toJavaScript(),
                             urn: r.getUrn(),
                             name: r.getName(),
+                            opts: getResourceOptions(r),
                         });
                     }
 
@@ -276,6 +281,44 @@ function makeAnalyzeStackRpcFun(policyPackName: string, policyPackVersion: strin
         // Now marshal the results into a resulting diagnostics list, and invoke the callback to finish.
         callback(undefined, makeAnalyzeResponse(ds));
     };
+}
+
+// Creates a PolicyResourceOptions object from the GRPC request.
+function getResourceOptions(r: any): PolicyResourceOptions {
+    const opts = r.getOptions();
+    const result: PolicyResourceOptions = {
+        protect: opts.getProtect(),
+        dependencies: opts.getDependenciesList().sort(),
+        provider: opts.getProvider(),
+        aliases: opts.getAliasesList().sort(),
+        customTimeouts: getCustomTimeouts(opts),
+        additionalSecretOutputs: opts.getAdditionalsecretoutputsList().sort(),
+    };
+    // Include parent only if truthy.
+    const parent = opts.getParent();
+    if (parent) {
+        result.parent = parent;
+    }
+    return result;
+}
+
+// Creates a CustomTimeouts object from the GRPC request.
+function getCustomTimeouts(opts: any): CustomTimeouts | undefined {
+    const timeouts = opts.getCustomtimeouts();
+    if (timeouts) {
+        const createVal = timeouts.getCreate();
+        const updateVal = timeouts.getUpdate();
+        const deleteVal = timeouts.getDelete();
+        if (createVal || updateVal || deleteVal) {
+            const result: CustomTimeouts = {};
+            // Only add truthy members.
+            if (createVal) { result.create = createVal; }
+            if (updateVal) { result.update = updateVal; }
+            if (deleteVal) { result.delete = deleteVal; }
+            return result;
+        }
+    }
+    return undefined;
 }
 
 // Type guard used to determine if the `Policy` is a `ResourceValidationPolicy`.

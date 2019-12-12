@@ -176,6 +176,7 @@ install::
 	cd "$(PULUMI_NODE_MODULES)/$(NODE_MODULE_NAME)" && \
 		yarn install --offline --production && \
 		(yarn unlink > /dev/null 2>&1 || true) && \
+		yarn link @pulumi/pulumi && \
 		yarn link
 endif
 

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Resource, Unwrap } from "@pulumi/pulumi";
+import { CustomTimeouts, Resource, Unwrap } from "@pulumi/pulumi";
 import * as q from "@pulumi/pulumi/queryable";
 import { serve } from "./server";
 
@@ -157,9 +157,50 @@ export interface ResourceValidationArgs {
      */
     name: string;
 
-    // TODO: Add support for the following:
-    //
-    // opts: PolicyResourceOptions;
+    /**
+     * The options of the resource.
+     */
+    opts: PolicyResourceOptions;
+}
+
+/**
+ * PolicyResourceOptions is the bag of settings that control a resource's behavior.
+ */
+export interface PolicyResourceOptions {
+    /**
+     * An optional parent resource to which this resource belongs.
+     */
+    parent?: string;
+
+    /**
+     * When set to true, protect ensures this resource cannot be deleted.
+     */
+    protect: boolean;
+
+    /**
+     * Dependencies of this resource.
+     */
+    dependencies: string[];
+
+    /**
+     * The provider to use for this resource.
+     */
+    provider: string;
+
+    /**
+     * Additional URNs that should be aliased to this resource.
+     */
+    aliases: string[];
+
+    /**
+     * An optional customTimeouts configuration block.
+     */
+    customTimeouts?: CustomTimeouts;
+
+    /**
+     * Outputs that should always be treated as secrets.
+     */
+    additionalSecretOutputs: string[];
 }
 
 /**
@@ -241,9 +282,10 @@ export interface PolicyResource {
      */
     name: string;
 
-    // TODO: Add support for the following:
-    //
-    // opts: PolicyResourceOptions;
+    /**
+     * The options of the resource.
+     */
+    opts: PolicyResourceOptions;
 }
 
 /**
