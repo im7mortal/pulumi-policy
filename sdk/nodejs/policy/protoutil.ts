@@ -104,6 +104,17 @@ export function makeAnalyzerInfo(policyPackName: string, enforcementLevel: Enfor
         policyInfo.setDescription(policy.description);
         policyInfo.setEnforcementlevel(mapEnforcementLevel(policy.enforcementLevel || enforcementLevel));
 
+        if (policy.config) {
+            const configInfo = new analyzerproto.PolicyInfo.ConfigInfo();
+            const properties = configInfo.getPropertiesMap();
+            for (const property of Object.keys(policy.config.properties)) {
+                const propertyJSONSchema = JSON.stringify(policy.config.properties[property]);
+                properties.set(property, propertyJSONSchema);
+            }
+            configInfo.setRequiredList(policy.config.required);
+            policyInfo.setConfig(configInfo);
+        }
+
         policyInfos.push(policyInfo);
     }
     ai.setPoliciesList(policyInfos);
