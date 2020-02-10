@@ -85,6 +85,9 @@ func runPolicyPackIntegrationTest(
 	e.RunCommand("yarn", "install")
 	abortIfFailed(t)
 
+	e.RunCommand("yarn", "link", "@pulumi/pulumi")
+	abortIfFailed(t)
+
 	// Link @pulumi/policy.
 	e.RunCommand("yarn", "link", "@pulumi/policy")
 	abortIfFailed(t)
