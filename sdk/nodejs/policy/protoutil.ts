@@ -93,7 +93,7 @@ export interface Diagnostic {
 // ------------------------------------------------------------------------------------------------
 
 /** @internal */
-export function makeAnalyzerInfo(policyPackName: string, policies: Policies): any {
+export function makeAnalyzerInfo(policyPackName: string, enforcementLevel: EnforcementLevel, policies: Policies): any {
     const ai: any = new analyzerproto.AnalyzerInfo();
     ai.setName(policyPackName);
 
@@ -102,7 +102,7 @@ export function makeAnalyzerInfo(policyPackName: string, policies: Policies): an
         const policyInfo = new analyzerproto.PolicyInfo();
         policyInfo.setName(policy.name);
         policyInfo.setDescription(policy.description);
-        policyInfo.setEnforcementlevel(mapEnforcementLevel(policy.enforcementLevel));
+        policyInfo.setEnforcementlevel(mapEnforcementLevel(policy.enforcementLevel || enforcementLevel));
 
         policyInfos.push(policyInfo);
     }

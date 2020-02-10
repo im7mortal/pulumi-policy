@@ -21,6 +21,7 @@ import * as q from "@pulumi/pulumi/queryable";
 
 import { deserializeProperties } from "./deserialize";
 import {
+    EnforcementLevel,
     Policies,
     Policy,
     PolicyCustomTimeouts,
@@ -69,7 +70,12 @@ const packNameRE = "^[a-zA-Z0-9-_.]{1,100}$";
   * @param policies The policies to be served.
   * @internal
   */
-export function serve(policyPackName: string, policyPackVersion: string, policies: Policies): void {
+export function serve(
+    policyPackName: string,
+    policyPackVersion: string,
+    enforcementLevel: EnforcementLevel,
+    policies: Policies,
+): void {
     if (!policyPackName || !policyPackName.match(packNameRE)) {
         console.error(`Invalids policy pack name "${policyPackName}". Policy pack names may only contain alphanumerics, hyphens, underscores, or periods.`);
         process.exit(1);
@@ -87,9 +93,9 @@ export function serve(policyPackName: string, policyPackVersion: string, policie
     // Finally connect up the gRPC client/server and listen for incoming requests.
     const server = new grpc.Server();
     server.addService(analyzerrpc.AnalyzerService, {
-        analyze: makeAnalyzeRpcFun(policyPackName, policyPackVersion, policies),
-        analyzeStack: makeAnalyzeStackRpcFun(policyPackName, policyPackVersion, policies),
-        getAnalyzerInfo: makeGetAnalyzerInfoRpcFun(policyPackName, policyPackVersion, policies),
+        analyze: makeAnalyzeRpcFun(policyPackName, policyPackVersion, enforcementLevel, policies),
+        analyzeStack: makeAnalyzeStackRpcFun(policyPackName, policyPackVersion, enforcementLevel, policies),
+        getAnalyzerInfo: makeGetAnalyzerInfoRpcFun(policyPackName, policyPackVersion, enforcementLevel, policies),
         getPluginInfo: getPluginInfoRpc,
     });
     const port: number = server.bind(`0.0.0.0:0`, grpc.ServerCredentials.createInsecure());
@@ -104,12 +110,13 @@ export function serve(policyPackName: string, policyPackVersion: string, policie
 function makeGetAnalyzerInfoRpcFun(
     policyPackName: string,
     policyPackVersion: string,
+    enforcementLevel: EnforcementLevel,
     policies: Policies,
 ) {
     return async function(call: any, callback: any): Promise<void> {
         try {
             const enabledPolicies = (policies || []).filter(p => p.enforcementLevel !== "disabled");
-            callback(undefined, makeAnalyzerInfo(policyPackName, enabledPolicies));
+            callback(undefined, makeAnalyzerInfo(policyPackName, enforcementLevel, enabledPolicies));
         } catch (e) {
             callback(asGrpcError(e), undefined);
         }
@@ -128,7 +135,12 @@ async function getPluginInfoRpc(call: any, callback: any): Promise<void> {
 
 // analyze is the RPC call that will analyze an individual resource, one at a time, called with the
 // "inputs" to the resource, before it is updated.
-function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, policies: Policies) {
+function makeAnalyzeRpcFun(
+    policyPackName: string,
+    policyPackVersion: string,
+    enforcementLevel: EnforcementLevel,
+    policies: Policies,
+) {
     return async function(call: any, callback: any): Promise<void> {
         // Prep to perform the analysis.
         const req = call.request;
@@ -142,9 +154,7 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
                 }
 
                 const reportViolation: ReportViolation = (message, urn) => {
-                    const { validateResource, name, ...diag } = p;
-
-                    let violationMessage = diag.description;
+                    let violationMessage = p.description;
                     if (message) {
                         violationMessage += `\n${message}`;
                     }
@@ -155,7 +165,8 @@ function makeAnalyzeRpcFun(policyPackName: string, policyPackVersion: string, po
                         policyPackVersion,
                         message: violationMessage,
                         urn,
-                        ...diag,
+                        description: p.description,
+                        enforcementLevel: p.enforcementLevel || enforcementLevel,
                     });
                 };
 
@@ -243,7 +254,12 @@ interface IntermediateStackResource {
 
 // analyzeStack is the RPC call that will analyze all resources within a stack, at the end of a successful
 // preview or update. The provided resources are the "outputs", after any mutations have taken place.
-function makeAnalyzeStackRpcFun(policyPackName: string, policyPackVersion: string, policies: Policies) {
+function makeAnalyzeStackRpcFun(
+    policyPackName: string,
+    policyPackVersion: string,
+    enforcementLevel: EnforcementLevel,
+    policies: Policies,
+) {
     return async function(call: any, callback: any): Promise<void> {
         // Prep to perform the analysis.
         const req = call.request;
@@ -257,20 +273,19 @@ function makeAnalyzeStackRpcFun(policyPackName: string, policyPackVersion: strin
                 }
 
                 const reportViolation: ReportViolation = (message, urn) => {
-                    const { validateStack, name, ...diag } = p;
-
-                    let violationMessage = diag.description;
+                    let violationMessage = p.description;
                     if (message) {
                         violationMessage += `\n${message}`;
                     }
 
                     ds.push({
-                        policyName: name,
+                        policyName: p.name,
                         policyPackName,
                         policyPackVersion,
                         message: violationMessage,
                         urn,
-                        ...diag,
+                        description: p.description,
+                        enforcementLevel: p.enforcementLevel || enforcementLevel,
                     });
                 };
 
