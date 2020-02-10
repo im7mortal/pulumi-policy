@@ -10,6 +10,7 @@ TESTPARALLELISM := 10
 
 build::
 	yarn install
+	yarn link @pulumi/pulumi
 	rm -rf bin/
 	tsc
 	sed -e 's/\$${VERSION}/$(VERSION)/g' < package.json > bin/package.json
