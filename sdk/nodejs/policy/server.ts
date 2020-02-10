@@ -77,8 +77,15 @@ export function serve(
     policies: Policies,
 ): void {
     if (!policyPackName || !policyPackName.match(packNameRE)) {
-        console.error(`Invalids policy pack name "${policyPackName}". Policy pack names may only contain alphanumerics, hyphens, underscores, or periods.`);
+        console.error(`Invalid policy pack name "${policyPackName}". Policy pack names may only contain alphanumerics, hyphens, underscores, or periods.`);
         process.exit(1);
+    }
+
+    for (const policy of (policies || [])) {
+        if (policy.name === "all") {
+            console.error(`Invalid policy name "all". "all" is a reserved name.`);
+            process.exit(1);
+        }
     }
 
     if (servingPolicyPack) {
