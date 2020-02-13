@@ -13,6 +13,8 @@
 // limitations under the License.
 
 const grpc = require("grpc");
+const google_protobuf_empty_pb = require("google-protobuf/google/protobuf/empty_pb.js");
+const analyzerproto = require("@pulumi/pulumi/proto/analyzer_pb.js");
 const analyzerrpc = require("@pulumi/pulumi/proto/analyzer_grpc_pb.js");
 const plugproto = require("@pulumi/pulumi/proto/plugin_pb.js");
 
@@ -104,6 +106,7 @@ export function serve(
         analyzeStack: makeAnalyzeStackRpcFun(policyPackName, policyPackVersion, enforcementLevel, policies),
         getAnalyzerInfo: makeGetAnalyzerInfoRpcFun(policyPackName, policyPackVersion, enforcementLevel, policies),
         getPluginInfo: getPluginInfoRpc,
+        configure: configure,
     });
     const port: number = server.bind(`0.0.0.0:0`, grpc.ServerCredentials.createInsecure());
 
@@ -135,6 +138,20 @@ async function getPluginInfoRpc(call: any, callback: any): Promise<void> {
         const resp: any = new plugproto.PluginInfo();
         resp.setVersion(version);
         callback(undefined, resp);
+    } catch (e) {
+        callback(asGrpcError(e), undefined);
+    }
+}
+
+async function configure(call: any, callback: any): Promise<void> {
+    const req = call.request;
+    try {
+        const config = req.getPolicyconfigMap();
+        const entries: Array<[string, any]> = config.getEntryList();
+        for (const [k, v] of entries) {
+            // TODO
+        }
+        callback(undefined, new google_protobuf_empty_pb.Empty());
     } catch (e) {
         callback(asGrpcError(e), undefined);
     }
