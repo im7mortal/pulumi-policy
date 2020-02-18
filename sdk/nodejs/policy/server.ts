@@ -13,7 +13,7 @@
 // limitations under the License.
 
 const grpc = require("grpc");
-const google_protobuf_empty_pb = require("google-protobuf/google/protobuf/empty_pb.js");
+const emptyproto = require("google-protobuf/google/protobuf/empty_pb.js");
 const analyzerproto = require("@pulumi/pulumi/proto/analyzer_pb.js");
 const analyzerrpc = require("@pulumi/pulumi/proto/analyzer_grpc_pb.js");
 const plugproto = require("@pulumi/pulumi/proto/plugin_pb.js");
@@ -60,6 +60,8 @@ let servingPolicyPack: string | undefined = undefined;
 
 // Regular expression for the policy pack name.
 const packNameRE = "^[a-zA-Z0-9-_.]{1,100}$";
+
+let config: Record<string, any> | undefined = undefined;
 
 /**
   * Starts the gRPC server to communicate with the Pulumi CLI client for analyzing resources.
@@ -146,12 +148,14 @@ async function getPluginInfoRpc(call: any, callback: any): Promise<void> {
 async function configure(call: any, callback: any): Promise<void> {
     const req = call.request;
     try {
-        const config = req.getPolicyconfigMap();
-        const entries: Array<[string, any]> = config.getEntryList();
+        const result: Record<string, any> = {};
+        const c = req.getPolicyconfigMap();
+        const entries: Array<[string, any]> = c.getEntryList();
         for (const [k, v] of entries) {
-            // TODO
+            result[k] = v;
         }
-        callback(undefined, new google_protobuf_empty_pb.Empty());
+        config = result;
+        callback(undefined, new emptyproto.Empty());
     } catch (e) {
         callback(asGrpcError(e), undefined);
     }
@@ -177,6 +181,8 @@ function makeAnalyzeRpcFun(
                     continue;
                 }
 
+                const configEnforcementLevel: EnforcementLevel | undefined = config?.[p.name]?.enforcementLevel;
+
                 const reportViolation: ReportViolation = (message, urn) => {
                     let violationMessage = p.description;
                     if (message) {
@@ -184,13 +190,13 @@ function makeAnalyzeRpcFun(
                     }
 
                     ds.push({
-                        policyName: name,
+                        policyName: p.name,
                         policyPackName,
                         policyPackVersion,
                         message: violationMessage,
                         urn,
                         description: p.description,
-                        enforcementLevel: p.enforcementLevel || enforcementLevel,
+                        enforcementLevel: configEnforcementLevel || p.enforcementLevel || enforcementLevel,
                     });
                 };
 
@@ -223,6 +229,8 @@ function makeAnalyzeRpcFun(
                                     ? props as Unwrap<NonNullable<TArgs>>
                                     : undefined;
                             },
+
+                            getConfig: makeGetConfigFun(p.name),
                         };
                         const provider = getProviderResource(req);
                         if (provider) {
@@ -296,6 +304,8 @@ function makeAnalyzeStackRpcFun(
                     continue;
                 }
 
+                const configEnforcementLevel: EnforcementLevel | undefined = config?.[p.name]?.enforcementLevel;
+
                 const reportViolation: ReportViolation = (message, urn) => {
                     let violationMessage = p.description;
                     if (message) {
@@ -309,7 +319,7 @@ function makeAnalyzeStackRpcFun(
                         message: violationMessage,
                         urn,
                         description: p.description,
-                        enforcementLevel: p.enforcementLevel || enforcementLevel,
+                        enforcementLevel: configEnforcementLevel || p.enforcementLevel || enforcementLevel,
                     });
                 };
 
@@ -389,6 +399,7 @@ function makeAnalyzeStackRpcFun(
 
                     const args: StackValidationArgs = {
                         resources: intermediates.map(r => r.resource),
+                        getConfig: makeGetConfigFun(p.name),
                     };
 
                     // Pass the result of the validate call to Promise.resolve.
@@ -419,6 +430,22 @@ function makeAnalyzeStackRpcFun(
 
         // Now marshal the results into a resulting diagnostics list, and invoke the callback to finish.
         callback(undefined, makeAnalyzeResponse(ds));
+    };
+}
+
+// Creates a function for retrieving the configuration for a policy.
+function makeGetConfigFun<T>(policyName: string) {
+    return function(): T {
+        // If we don't have config, or don't have config for this policy,
+        // return an empty object.
+        const c = config?.[policyName];
+        if (!c) {
+            return <T>{};
+        }
+
+        // Otherwise, return the config properties (except enforcementLevel).
+        const { enforcementLevel: ef, ...properties } = c;
+        return properties;
     };
 }
 

@@ -105,14 +105,14 @@ export function makeAnalyzerInfo(policyPackName: string, enforcementLevel: Enfor
         policyInfo.setEnforcementlevel(mapEnforcementLevel(policy.enforcementLevel || enforcementLevel));
 
         if (policy.config) {
-            const configInfo = new analyzerproto.PolicyInfo.ConfigInfo();
-            const properties = configInfo.getPropertiesMap();
-            for (const property of Object.keys(policy.config.properties)) {
-                const propertyJSONSchema = JSON.stringify(policy.config.properties[property]);
-                properties.set(property, propertyJSONSchema);
+            const schema = new analyzerproto.PolicyConfigSchema();
+            const props = schema.getPropertiesMap();
+            for (const p of Object.keys(policy.config.properties)) {
+                const jsonSchema = structproto.Struct.fromJavaScript(policy.config.properties[p]);
+                props.set(p, jsonSchema);
             }
-            configInfo.setRequiredList(policy.config.required);
-            policyInfo.setConfig(configInfo);
+            schema.setRequiredList(policy.config.required);
+            policyInfo.setConfigschema(schema);
         }
 
         policyInfos.push(policyInfo);
