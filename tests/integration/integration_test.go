@@ -249,6 +249,7 @@ func (cs *Case) InstallNodeJSDep() {
 func runPolicyPackIntegrationTest(
 	t *testing.T, testDirName string, runtime Runtime,
 	initialConfig map[string]string, scenarios []policyTestScenario) {
+	t.Parallel()
 	NewCase(t, testDirName, runtime, initialConfig, scenarios)
 }
 
