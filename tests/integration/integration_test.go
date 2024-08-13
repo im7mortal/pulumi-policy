@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,61 +63,224 @@ func pathEnvWith(path string) string {
 	return "PATH=" + pathEnv + pathSeparator + path
 }
 
-// runPolicyPackIntegrationTest creates a new Pulumi stack and then runs through
-// a sequence of test scenarios where a configuration value is set and then
-// the stack is updated or previewed, confirming the expected result.
-func runPolicyPackIntegrationTest(
+func getCmdArgs(isPython bool, policyPackDirectoryPath string) (string, []string) {
+	cmd := "pulumi"
+	args := []string{"up", "--yes", "--policy-pack", policyPackDirectoryPath}
+	if isPython {
+		cmd = "pipenv"
+		args = append([]string{"run", "pulumi"}, args...)
+	}
+	return cmd, args
+}
+
+type Case struct {
+	t             *testing.T
+	testDirName   string
+	runtime       Runtime
+	initialConfig map[string]string
+	scenarios     []policyTestScenario
+
+	pythonVenv    sync.Once
+	hasPythonPack bool
+
+	scenariosP []string
+
+	e *ptesting.Environment
+
+	depInstallations []func()
+}
+
+func NewCase(
 	t *testing.T, testDirName string, runtime Runtime,
 	initialConfig map[string]string, scenarios []policyTestScenario,
 ) {
-	t.Logf("Running Policy Pack Integration Test from directory %q", testDirName)
+	cs := Case{
+		t:             t,
+		testDirName:   testDirName,
+		runtime:       runtime,
+		initialConfig: initialConfig,
+		scenarios:     scenarios,
+	}
+	cs.Run()
+}
 
-	// Get the directory for the policy pack to run.
-	cwd, err := os.Getwd()
+func GetDirectories(path string) ([]string, error) {
+	entries, err := os.ReadDir(path)
 	if err != nil {
-		t.Fatalf("Error getting working directory")
+		return nil, err
 	}
-	rootDir := filepath.Join(cwd, testDirName)
 
-	// The Pulumi project name matches the test dir name in these tests.
-	os.Setenv("PULUMI_TEST_PROJECT", testDirName)
-
-	stackName := fmt.Sprintf("%s-%d", testDirName, time.Now().Unix()%100000)
-	os.Setenv("PULUMI_TEST_STACK", stackName)
-
-	// Copy the root directory to /tmp and run various operations within that directory.
-	e := ptesting.NewEnvironment(t)
-	defer func() {
-		if !t.Failed() {
-			e.DeleteEnvironment()
+	var directories []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			directories = append(directories, entry.Name())
 		}
-	}()
-	e.ImportDirectory(rootDir)
-
-	// If there is a testcomponent directory, update dependencies and set the PATH envvar.
-	testComponentDir := filepath.Join(e.RootPath, "testcomponent")
-	if _, err := os.Stat(testComponentDir); !os.IsNotExist(err) {
-		// Install dependencies.
-		e.CWD = testComponentDir
-		e.RunCommand("go", "mod", "tidy")
-		abortIfFailed(t)
-
-		// Set the PATH envvar to the path to the testcomponent so the provider is available
-		// to the program.
-		e.Env = []string{pathEnvWith(testComponentDir)}
 	}
 
+	return directories, nil
+}
+
+func Contains(slice []string, target string) bool {
+	for _, item := range slice {
+		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (cs *Case) FindModules() {
+
+	dirs, _ := GetDirectories(cs.testDirName)
+
+	if Contains(dirs, "testcomponent") {
+		cs.depInstallations = append(cs.depInstallations, cs.InstallTestComponent)
+	}
+
+	if Contains(dirs, "policy-pack") {
+		cs.depInstallations = append(cs.depInstallations, cs.InstallNodeJSDep)
+		cs.scenariosP = append(cs.scenariosP, filepath.Join(cs.e.RootPath, "policy-pack"))
+
+	}
+
+	if Contains(dirs, "policy-pack-python") {
+		cs.hasPythonPack = true
+		cs.depInstallations = append(cs.depInstallations, cs.InstallPythonDep)
+		cs.scenariosP = append(cs.scenariosP, filepath.Join(cs.e.RootPath, "policy-pack-python"))
+
+	}
+}
+
+func (cs *Case) RunDepModules() {
+
+	for _, f := range cs.depInstallations {
+		f()
+	}
+}
+
+func CopyEnv(e *ptesting.Environment) *ptesting.Environment {
+	return &ptesting.Environment{
+		T:                   e.T,
+		RootPath:            e.RootPath,
+		CWD:                 e.CWD,
+		Backend:             e.Backend,
+		Env:                 e.Env,
+		Passphrase:          e.Passphrase,
+		NoPassphrase:        e.NoPassphrase,
+		UseLocalPulumiBuild: e.UseLocalPulumiBuild,
+		Stdin:               e.Stdin,
+	}
+
+}
+
+func (cs *Case) InstallPythonVenvOnce() {
+	cs.pythonVenv.Do(func() {
+		cs.e.RunCommand("pipenv", "--python", "3")
+		abortIfFailed(cs.t)
+	})
+}
+
+func (cs *Case) InstallTestComponent() {
+	testComponentDir := filepath.Join(cs.e.RootPath, "testcomponent")
+
+	e := CopyEnv(cs.e)
+
+	// Install dependencies.
+	e.CWD = testComponentDir
+	e.RunCommand("go", "mod", "tidy")
+	abortIfFailed(cs.t)
+
+	// Set the PATH envvar to the path to the testcomponent so the provider is available
+	// to the program.
+	cs.e.Env = []string{pathEnvWith(testComponentDir)}
+}
+
+func (cs *Case) InstallProgram() {
+	switch cs.runtime {
+	case NodeJS:
+		cs.e.RunCommand("yarn", "install")
+		abortIfFailed(cs.t)
+
+	case Python:
+		cs.InstallPythonVenvOnce()
+		cs.e.RunCommand("pipenv", "run", "pip", "install", "-r", "requirements.txt")
+		abortIfFailed(cs.t)
+
+	default:
+		cs.t.Fatalf("Unexpected runtime value.")
+	}
+}
+
+func (cs *Case) InstallPythonDep() {
+
+	e := CopyEnv(cs.e)
+
+	cs.InstallPythonVenvOnce()
+	pythonPackDir := filepath.Join(e.RootPath, "policy-pack-python")
+	pythonPackRequirements := filepath.Join(pythonPackDir, "requirements.txt")
+	if _, err := os.Stat(pythonPackRequirements); !os.IsNotExist(err) {
+		e.RunCommand("pipenv", "run", "pip", "install", "-r", pythonPackRequirements)
+		abortIfFailed(cs.t)
+	}
+
+	dep := filepath.Join("..", "..", "sdk", "python", "env", "src")
+	dep, err := filepath.Abs(dep)
+	assert.NoError(cs.t, err)
+	e.RunCommand("pipenv", "run", "pip", "install", "-e", dep)
+	abortIfFailed(cs.t)
+}
+
+func (cs *Case) InstallNodeJSDep() {
+
+	e := CopyEnv(cs.e)
 	// Change to the Policy Pack directory.
 	packDir := filepath.Join(e.RootPath, "policy-pack")
 	e.CWD = packDir
 
 	// Link @pulumi/policy.
 	e.RunCommand("yarn", "link", "@pulumi/policy")
-	abortIfFailed(t)
+	abortIfFailed(cs.t)
 
 	// Get dependencies.
 	e.RunCommand("yarn", "install")
-	abortIfFailed(t)
+	abortIfFailed(cs.t)
+}
+
+func runPolicyPackIntegrationTest(
+	t *testing.T, testDirName string, runtime Runtime,
+	initialConfig map[string]string, scenarios []policyTestScenario) {
+	NewCase(t, testDirName, runtime, initialConfig, scenarios)
+}
+
+func (cs *Case) Run() {
+	cs.t.Logf("Running Policy Pack Integration Test from directory %q", cs.testDirName)
+
+	// Get the directory for the policy pack to run.
+	cwd, err := os.Getwd()
+	if err != nil {
+		cs.t.Fatalf("Error getting working directory")
+	}
+	rootDir := filepath.Join(cwd, cs.testDirName)
+
+	// The Pulumi project name matches the test dir name in these tests.
+	os.Setenv("PULUMI_TEST_PROJECT", cs.testDirName)
+
+	stackName := fmt.Sprintf("%s-%d", cs.testDirName, time.Now().Unix()%100000)
+	os.Setenv("PULUMI_TEST_STACK", stackName)
+
+	// Copy the root directory to /tmp and run various operations within that directory.
+
+	cs.e = ptesting.NewEnvironment(cs.t)
+	e := cs.e
+	defer func() {
+		if !cs.t.Failed() {
+			e.DeleteEnvironment()
+		}
+	}()
+	e.ImportDirectory(rootDir)
+
+	cs.FindModules()
+	cs.RunDepModules()
 
 	// Change to the Pulumi program directory.
 	programDir := filepath.Join(e.RootPath, "program")
@@ -124,71 +288,29 @@ func runPolicyPackIntegrationTest(
 
 	// Create the stack.
 	e.RunCommand("pulumi", "login", "--local")
-	abortIfFailed(t)
+	abortIfFailed(cs.t)
 
 	e.RunCommand("pulumi", "stack", "init", stackName)
-	abortIfFailed(t)
+	abortIfFailed(cs.t)
 
-	// Get dependencies.
-	var venvCreated bool
-	switch runtime {
-	case NodeJS:
-		e.RunCommand("yarn", "install")
-		abortIfFailed(t)
-
-	case Python:
-		e.RunCommand("pipenv", "--python", "3")
-		abortIfFailed(t)
-		e.RunCommand("pipenv", "run", "pip", "install", "-r", "requirements.txt")
-		abortIfFailed(t)
-		venvCreated = true
-
-	default:
-		t.Fatalf("Unexpected runtime value.")
-	}
-
-	// If we have a Python policy pack, create the virtual environment (if one doesn't already exist),
-	// and install dependencies into it. If the test uses a Python program, the virtual environment and
-	// activation will be shared between the program and policy pack.
-	var hasPythonPack bool
-	pythonPackDir := filepath.Join(e.RootPath, "policy-pack-python")
-	if _, err := os.Stat(pythonPackDir); !os.IsNotExist(err) {
-		hasPythonPack = true
-
-		if !venvCreated {
-			e.RunCommand("pipenv", "--python", "3")
-			abortIfFailed(t)
-		}
-
-		pythonPackRequirements := filepath.Join(pythonPackDir, "requirements.txt")
-		if _, err := os.Stat(pythonPackRequirements); !os.IsNotExist(err) {
-			e.RunCommand("pipenv", "run", "pip", "install", "-r", pythonPackRequirements)
-			abortIfFailed(t)
-		}
-
-		dep := filepath.Join("..", "..", "sdk", "python", "env", "src")
-		dep, err = filepath.Abs(dep)
-		assert.NoError(t, err)
-		e.RunCommand("pipenv", "run", "pip", "install", "-e", dep)
-		abortIfFailed(t)
-	}
+	cs.InstallProgram()
 
 	// Initial configuration.
-	for k, v := range initialConfig {
+	for k, v := range cs.initialConfig {
 		e.RunCommand("pulumi", "config", "set", k, v)
 	}
 
 	// After this point, we want be sure to cleanup the stack, so we don't accidentally leak
 	// any cloud resources.
 	defer func() {
-		t.Log("Cleaning up Stack")
+		cs.t.Log("Cleaning up Stack")
 		e.RunCommand("pulumi", "destroy", "--yes")
 		e.RunCommand("pulumi", "stack", "rm", "--yes")
 	}()
 
-	assert.True(t, len(scenarios) > 0, "no test scenarios provided")
+	assert.True(cs.t, len(cs.scenarios) > 0, "no test scenarios provided")
 	runScenarios := func(policyPackDirectoryPath string) {
-		t.Run(policyPackDirectoryPath, func(t *testing.T) {
+		cs.t.Run(policyPackDirectoryPath, func(t *testing.T) {
 			e.T = t
 
 			// Clean up the stack after running through the scenarios, so that subsequent runs
@@ -198,7 +320,7 @@ func runPolicyPackIntegrationTest(
 				abortIfFailed(t)
 			}()
 
-			for idx, scenario := range scenarios {
+			for idx, scenario := range cs.scenarios {
 				// Create a sub-test so go test will output data incrementally, which will let
 				// a CI system like Travis know not to kill the job if no output is sent after 10m.
 				// idx+1 to make it 1-indexed.
@@ -208,8 +330,7 @@ func runPolicyPackIntegrationTest(
 
 					e.RunCommand("pulumi", "config", "set", "scenario", fmt.Sprintf("%d", idx+1))
 
-					cmd := "pulumi"
-					args := []string{"up", "--yes", "--policy-pack", policyPackDirectoryPath}
+					cmd, args := getCmdArgs(cs.runtime == Python || cs.hasPythonPack, policyPackDirectoryPath)
 
 					// If there is config for the scenario, write it out to a file and pass the file path
 					// as a --policy-pack-config argument.
@@ -235,11 +356,6 @@ func runPolicyPackIntegrationTest(
 
 						// Change back to the program directory to proceed with the update.
 						e.CWD = programDir
-					}
-
-					if runtime == Python || hasPythonPack {
-						cmd = "pipenv"
-						args = append([]string{"run", "pulumi"}, args...)
 					}
 
 					if len(scenario.WantErrors) == 0 {
@@ -270,13 +386,13 @@ func runPolicyPackIntegrationTest(
 			}
 		})
 	}
-	runScenarios(packDir)
-	if hasPythonPack {
-		runScenarios(pythonPackDir)
+
+	for _, scenarioPath := range cs.scenariosP {
+		runScenarios(scenarioPath)
 	}
 
-	e.T = t
-	t.Log("Finished test scenarios.")
+	e.T = cs.t
+	cs.t.Log("Finished test scenarios.")
 	// Cleanup already registered via defer.
 }
 
