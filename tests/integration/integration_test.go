@@ -169,10 +169,15 @@ func (cs *Case) FindModules() {
 }
 
 func (cs *Case) RunDepModules() {
-
+	wg := sync.WaitGroup{}
 	for _, f := range cs.depInstallations {
-		f()
+		wg.Add(1)
+		go func(f_ func()) {
+			f_()
+			wg.Done()
+		}(f)
 	}
+	wg.Wait()
 }
 
 func CopyEnv(e *ptesting.Environment) *ptesting.Environment {
