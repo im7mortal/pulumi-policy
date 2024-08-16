@@ -266,7 +266,19 @@ func (cs *Case) InstallNodeJSDep() {
 func runPolicyPackIntegrationTest(
 	t *testing.T, testDirName string, runtime Runtime,
 	initialConfig map[string]string, scenarios []policyTestScenario) {
-	t.Parallel()
+
+	// TODO it's actually hack
+	// TODO some test case require environment management which is not possible for parallel execution
+	syncRun := false
+	if initialConfig != nil {
+		if _, exist := initialConfig["SYNC"]; exist {
+			syncRun = true
+		}
+	}
+	if !syncRun {
+		t.Parallel()
+	}
+
 	NewCase(t, testDirName, runtime, initialConfig, scenarios)
 }
 
@@ -624,6 +636,9 @@ func TestRuntimeData(t *testing.T) {
 	runPolicyPackIntegrationTest(t, "runtime_data", NodeJS, map[string]string{
 		"aConfigValue": "this value is a value",
 		"aws:region":   "us-west-2",
+
+		"SYNC": "SYNC", // TODO it's actually hack
+		// TODO this test case require environment management which is not possible for parallel execution
 	}, []policyTestScenario{{WantErrors: nil}})
 }
 
