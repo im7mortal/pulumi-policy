@@ -30,11 +30,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type Runtime int
+type Runtime string
 
 const (
-	NodeJS Runtime = iota
-	Python
+	NodeJS Runtime = "nodejs"
+	Python Runtime = "python"
 )
 
 func abortIfFailed(t *testing.T) {
@@ -129,6 +129,23 @@ func Contains(slice []string, target string) bool {
 	return false
 }
 
+func (cs *Case) IsPicked(language Runtime) bool {
+	env := os.Getenv("POLICY_RUNTIMES")
+	// run all runtimes
+	if env == "" {
+		return true
+	}
+	env = strings.ToLower(env)
+	values := strings.Split(env, ",")
+
+	for _, val := range values {
+		if Runtime(val) == language {
+			return true
+		}
+	}
+	return false
+}
+
 func (cs *Case) FindModules() {
 
 	dirs, _ := GetDirectories(cs.testDirName)
@@ -137,13 +154,13 @@ func (cs *Case) FindModules() {
 		cs.depInstallations = append(cs.depInstallations, cs.InstallTestComponent)
 	}
 
-	if Contains(dirs, "policy-pack") {
+	if Contains(dirs, "policy-pack") && cs.IsPicked(NodeJS) {
 		cs.depInstallations = append(cs.depInstallations, cs.InstallNodeJSDep)
 		cs.scenariosP = append(cs.scenariosP, filepath.Join(cs.e.RootPath, "policy-pack"))
 
 	}
 
-	if Contains(dirs, "policy-pack-python") {
+	if Contains(dirs, "policy-pack-python") && cs.IsPicked(Python) {
 		cs.hasPythonPack = true
 		cs.depInstallations = append(cs.depInstallations, cs.InstallPythonDep)
 		cs.scenariosP = append(cs.scenariosP, filepath.Join(cs.e.RootPath, "policy-pack-python"))
