@@ -37,6 +37,13 @@ const (
 	Python Runtime = "python"
 )
 
+// Workaround for https://github.com/pulumi/pulumi/blob/master/sdk/go/common/testing/environment.go#L175-L178
+// We typically have two Yarn runs:
+// 1. The first run is for TypeScript/JavaScript policies, which only blocks policy runs for that specific runtime.
+// 2. The second run is for Pulumi stacks (which use TypeScript). This run blocks all policy runtimes.
+// Each Yarn call on the stack should be executed before any Yarn call on policy.
+var YarnPriorityMutex = NewPriorityMutex()
+
 func abortIfFailed(t *testing.T) {
 	if t.Failed() {
 		t.Fatal("Aborting test as a result of unrecoverable error.")
@@ -220,7 +227,9 @@ func (cs *Case) InstallTestComponent() {
 func (cs *Case) InstallProgram() {
 	switch cs.runtime {
 	case NodeJS:
+		YarnPriorityMutex.LockPriority()
 		cs.e.RunCommand("yarn", "install")
+		YarnPriorityMutex.UnlockPriority()
 		abortIfFailed(cs.t)
 
 	case Python:
@@ -254,6 +263,8 @@ func (cs *Case) InstallPythonDep() {
 
 func (cs *Case) InstallNodeJSDep() {
 
+	YarnPriorityMutex.LockRegular()
+	defer YarnPriorityMutex.UnlockRegular()
 	e := CopyEnv(cs.e)
 	// Change to the Policy Pack directory.
 	packDir := filepath.Join(e.RootPath, "policy-pack")
