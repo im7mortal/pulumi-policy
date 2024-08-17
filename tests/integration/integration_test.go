@@ -248,6 +248,12 @@ func (cs *Case) InstallProgram() {
 	default:
 		cs.t.Fatalf("Unexpected runtime value.")
 	}
+
+	// Initial configuration.
+	for k, v := range cs.initialConfig {
+		e.RunCommand("pulumi", "config", "set", k, v)
+	}
+
 }
 
 func (cs *Case) CreateStack() {
@@ -377,11 +383,6 @@ func (cs *Case) Run() {
 
 	cs.CreateStack()
 	cs.InstallProgram()
-
-	// Initial configuration.
-	for k, v := range cs.initialConfig {
-		e.RunCommand("pulumi", "config", "set", k, v)
-	}
 
 	// After this point, we want be sure to cleanup the stack, so we don't accidentally leak
 	// any cloud resources.
