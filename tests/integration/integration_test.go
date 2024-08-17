@@ -87,6 +87,9 @@ type Case struct {
 	initialConfig map[string]string
 	scenarios     []policyTestScenario
 
+	programDir string
+	stackName  string
+
 	pythonVenv    sync.Once
 	hasPythonPack bool
 
@@ -227,21 +230,32 @@ func (cs *Case) InstallTestComponent() {
 }
 
 func (cs *Case) InstallProgram() {
+	e := CloneEnvWithPath(cs.e, cs.programDir)
 	switch cs.runtime {
 	case NodeJS:
 		YarnPriorityMutex.LockPriority()
-		cs.e.RunCommand("yarn", "install")
+		e.RunCommand("yarn", "install")
 		YarnPriorityMutex.UnlockPriority()
 		abortIfFailed(cs.t)
 
 	case Python:
 		cs.InstallPythonVenvOnce()
-		cs.e.RunCommand("pipenv", "run", "pip", "install", "-r", "requirements.txt")
+		e.RunCommand("pipenv", "run", "pip", "install", "-r", "requirements.txt")
 		abortIfFailed(cs.t)
 
 	default:
 		cs.t.Fatalf("Unexpected runtime value.")
 	}
+}
+
+func (cs *Case) CreateStack() {
+	e := CloneEnvWithPath(cs.e, cs.programDir)
+	// Create the stack.
+	e.RunCommand("pulumi", "login", "--local")
+	abortIfFailed(cs.t)
+
+	e.RunCommand("pulumi", "stack", "init", cs.stackName)
+	abortIfFailed(cs.t)
 }
 
 func (cs *Case) InstallPythonDep() {
@@ -313,8 +327,8 @@ func (cs *Case) Run() {
 	// The Pulumi project name matches the test dir name in these tests.
 	os.Setenv("PULUMI_TEST_PROJECT", cs.testDirName)
 
-	stackName := fmt.Sprintf("%s-%d", cs.testDirName, time.Now().Unix()%100000)
-	os.Setenv("PULUMI_TEST_STACK", stackName)
+	cs.stackName = fmt.Sprintf("%s-%d", cs.testDirName, time.Now().Unix()%100000)
+	os.Setenv("PULUMI_TEST_STACK", cs.stackName)
 
 	// Copy the root directory to /tmp and run various operations within that directory.
 
@@ -331,16 +345,10 @@ func (cs *Case) Run() {
 	cs.RunDepModules()
 
 	// Change to the Pulumi program directory.
-	programDir := filepath.Join(e.RootPath, "program")
-	e.CWD = programDir
+	cs.programDir = filepath.Join(e.RootPath, "program")
+	e.CWD = cs.programDir
 
-	// Create the stack.
-	e.RunCommand("pulumi", "login", "--local")
-	abortIfFailed(cs.t)
-
-	e.RunCommand("pulumi", "stack", "init", stackName)
-	abortIfFailed(cs.t)
-
+	cs.CreateStack()
 	cs.InstallProgram()
 
 	// Initial configuration.
@@ -403,7 +411,7 @@ func (cs *Case) Run() {
 						args = append(args, "--policy-pack-config", policyConfigFile)
 
 						// Change back to the program directory to proceed with the update.
-						e.CWD = programDir
+						e.CWD = cs.programDir
 					}
 
 					if len(scenario.WantErrors) == 0 {
