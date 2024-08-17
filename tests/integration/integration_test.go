@@ -60,6 +60,8 @@ type policyTestScenario struct {
 	Advisory bool
 	// The Policy Pack configuration to use for the test scenario.
 	PolicyPackConfig map[string]PolicyConfig
+	// Name
+	Name string
 }
 
 func pathEnvWith(path string) string {
@@ -314,6 +316,31 @@ func runPolicyPackIntegrationTest(
 	NewCase(t, testDirName, runtime, initialConfig, scenarios)
 }
 
+func (cs *Case) CheckPolicyPackConfig(scenario policyTestScenario) (args []string) {
+
+	if len(scenario.PolicyPackConfig) > 0 {
+		// Marshal the config to JSON, with indentation for easier debugging.
+		bytes, err := json.MarshalIndent(scenario.PolicyPackConfig, "", "    ")
+		if err != nil {
+			cs.t.Fatalf("error marshalling policy config to JSON: %v", err)
+		}
+
+		// Change to the config directory.
+		configDir := filepath.Join(cs.e.RootPath, "config", scenario.Name)
+		e := CloneEnvWithPath(cs.e, configDir)
+
+		// Write the JSON to a file.
+		filename := "policy-config.json"
+		e.WriteTestFile(filename, string(bytes))
+		abortIfFailed(cs.t)
+
+		// Add the policy config argument.
+		policyConfigFile := filepath.Join(configDir, filename)
+		args = append(args, "--policy-pack-config", policyConfigFile)
+	}
+	return
+}
+
 func (cs *Case) Run() {
 	cs.t.Logf("Running Policy Pack Integration Test from directory %q", cs.testDirName)
 
@@ -380,8 +407,8 @@ func (cs *Case) Run() {
 				// Create a sub-test so go test will output data incrementally, which will let
 				// a CI system like Travis know not to kill the job if no output is sent after 10m.
 				// idx+1 to make it 1-indexed.
-				scenarioName := fmt.Sprintf("scenario_%d", idx+1)
-				t.Run(scenarioName, func(t *testing.T) {
+				scenario.Name = fmt.Sprintf("scenario_%d", idx+1)
+				t.Run(scenario.Name, func(t *testing.T) {
 					e.T = t
 
 					e.RunCommand("pulumi", "config", "set", "scenario", fmt.Sprintf("%d", idx+1))
@@ -390,29 +417,7 @@ func (cs *Case) Run() {
 
 					// If there is config for the scenario, write it out to a file and pass the file path
 					// as a --policy-pack-config argument.
-					if len(scenario.PolicyPackConfig) > 0 {
-						// Marshal the config to JSON, with indentation for easier debugging.
-						bytes, err := json.MarshalIndent(scenario.PolicyPackConfig, "", "    ")
-						if err != nil {
-							t.Fatalf("error marshalling policy config to JSON: %v", err)
-						}
-
-						// Change to the config directory.
-						configDir := filepath.Join(e.RootPath, "config", scenarioName)
-						e.CWD = configDir
-
-						// Write the JSON to a file.
-						filename := "policy-config.json"
-						e.WriteTestFile(filename, string(bytes))
-						abortIfFailed(t)
-
-						// Add the policy config argument.
-						policyConfigFile := filepath.Join(configDir, filename)
-						args = append(args, "--policy-pack-config", policyConfigFile)
-
-						// Change back to the program directory to proceed with the update.
-						e.CWD = cs.programDir
-					}
+					args = append(args, cs.CheckPolicyPackConfig(scenario)...)
 
 					if len(scenario.WantErrors) == 0 {
 						t.Log("No errors are expected.")
