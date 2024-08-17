@@ -347,6 +347,63 @@ func (cs *Case) CheckPolicyPackConfig(scenario policyTestScenario) (args []strin
 	return
 }
 
+func (cs *Case) RunScenario(policyPackDirectoryPath string) {
+	e := CloneEnvWithPath(cs.e, cs.programDir)
+	cs.t.Run(policyPackDirectoryPath, func(t *testing.T) {
+		e.T = t
+
+		// Clean up the stack after running through the scenarios, so that subsequent runs
+		// begin on a clean slate.
+		defer func() {
+			e.RunCommand("pulumi", "destroy", "--yes")
+			abortIfFailed(t)
+		}()
+
+		for idx, scenario := range cs.scenarios {
+			// Create a sub-test so go test will output data incrementally, which will let
+			// a CI system like Travis know not to kill the job if no output is sent after 10m.
+			// idx+1 to make it 1-indexed.
+			scenario.Name = fmt.Sprintf("scenario_%d", idx+1)
+			t.Run(scenario.Name, func(t *testing.T) {
+				e.T = t
+
+				e.RunCommand("pulumi", "config", "set", "scenario", fmt.Sprintf("%d", idx+1))
+
+				cmd, args := getCmdArgs(cs.runtime == Python || cs.hasPythonPack, policyPackDirectoryPath)
+
+				// If there is config for the scenario, write it out to a file and pass the file path
+				// as a --policy-pack-config argument.
+				args = append(args, cs.CheckPolicyPackConfig(scenario)...)
+
+				if len(scenario.WantErrors) == 0 {
+					t.Log("No errors are expected.")
+					e.RunCommand(cmd, args...)
+				} else {
+					var stdout, stderr string
+					if scenario.Advisory {
+						stdout, stderr = e.RunCommand(cmd, args...)
+					} else {
+						stdout, stderr = e.RunCommandExpectError(cmd, args...)
+					}
+
+					for _, wantErr := range scenario.WantErrors {
+						inSTDOUT := strings.Contains(stdout, wantErr)
+						inSTDERR := strings.Contains(stderr, wantErr)
+
+						if !inSTDOUT && !inSTDERR {
+							t.Errorf("Did not find expected error %q", wantErr)
+						}
+					}
+
+					if t.Failed() {
+						t.Logf("Command output:\nSTDOUT:\n%v\n\nSTDERR:\n%v\n\n", stdout, stderr)
+					}
+				}
+			})
+		}
+	})
+}
+
 func (cs *Case) Run() {
 	cs.t.Logf("Running Policy Pack Integration Test from directory %q", cs.testDirName)
 
@@ -393,64 +450,8 @@ func (cs *Case) Run() {
 	}()
 
 	assert.True(cs.t, len(cs.scenarios) > 0, "no test scenarios provided")
-	runScenarios := func(policyPackDirectoryPath string) {
-		cs.t.Run(policyPackDirectoryPath, func(t *testing.T) {
-			e.T = t
-
-			// Clean up the stack after running through the scenarios, so that subsequent runs
-			// begin on a clean slate.
-			defer func() {
-				e.RunCommand("pulumi", "destroy", "--yes")
-				abortIfFailed(t)
-			}()
-
-			for idx, scenario := range cs.scenarios {
-				// Create a sub-test so go test will output data incrementally, which will let
-				// a CI system like Travis know not to kill the job if no output is sent after 10m.
-				// idx+1 to make it 1-indexed.
-				scenario.Name = fmt.Sprintf("scenario_%d", idx+1)
-				t.Run(scenario.Name, func(t *testing.T) {
-					e.T = t
-
-					e.RunCommand("pulumi", "config", "set", "scenario", fmt.Sprintf("%d", idx+1))
-
-					cmd, args := getCmdArgs(cs.runtime == Python || cs.hasPythonPack, policyPackDirectoryPath)
-
-					// If there is config for the scenario, write it out to a file and pass the file path
-					// as a --policy-pack-config argument.
-					args = append(args, cs.CheckPolicyPackConfig(scenario)...)
-
-					if len(scenario.WantErrors) == 0 {
-						t.Log("No errors are expected.")
-						e.RunCommand(cmd, args...)
-					} else {
-						var stdout, stderr string
-						if scenario.Advisory {
-							stdout, stderr = e.RunCommand(cmd, args...)
-						} else {
-							stdout, stderr = e.RunCommandExpectError(cmd, args...)
-						}
-
-						for _, wantErr := range scenario.WantErrors {
-							inSTDOUT := strings.Contains(stdout, wantErr)
-							inSTDERR := strings.Contains(stderr, wantErr)
-
-							if !inSTDOUT && !inSTDERR {
-								t.Errorf("Did not find expected error %q", wantErr)
-							}
-						}
-
-						if t.Failed() {
-							t.Logf("Command output:\nSTDOUT:\n%v\n\nSTDERR:\n%v\n\n", stdout, stderr)
-						}
-					}
-				})
-			}
-		})
-	}
-
 	for _, scenarioPath := range cs.scenariosP {
-		runScenarios(scenarioPath)
+		cs.RunScenario(scenarioPath)
 	}
 
 	e.T = cs.t
