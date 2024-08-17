@@ -15,6 +15,7 @@
 package integrationtests
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -95,11 +97,13 @@ type Case struct {
 	pythonVenv    sync.Once
 	hasPythonPack bool
 
-	scenariosP []string
-
 	e *ptesting.Environment
 
-	depInstallations []func()
+	depInstallations []func(ctx context.Context)
+
+	policyRuntimesQueue chan string
+	policyRuntimesDone  chan struct{}
+	numOfPolicyRuntimes atomic.Int32
 }
 
 func NewCase(
@@ -107,11 +111,13 @@ func NewCase(
 	initialConfig map[string]string, scenarios []policyTestScenario,
 ) {
 	cs := Case{
-		t:             t,
-		testDirName:   testDirName,
-		runtime:       runtime,
-		initialConfig: initialConfig,
-		scenarios:     scenarios,
+		t:                   t,
+		testDirName:         testDirName,
+		runtime:             runtime,
+		initialConfig:       initialConfig,
+		scenarios:           scenarios,
+		policyRuntimesQueue: make(chan string, 5),
+		policyRuntimesDone:  make(chan struct{}),
 	}
 	cs.Run()
 }
@@ -158,6 +164,13 @@ func (cs *Case) IsPicked(language Runtime) bool {
 	return false
 }
 
+func (cs *Case) RunDependency(f func(ctx context.Context), path string) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		f(ctx)
+		cs.policyRuntimesQueue <- path
+	}
+}
+
 func (cs *Case) FindModules() {
 
 	dirs, _ := GetDirectories(cs.testDirName)
@@ -167,29 +180,42 @@ func (cs *Case) FindModules() {
 	}
 
 	if Contains(dirs, "policy-pack") && cs.IsPicked(NodeJS) {
-		cs.depInstallations = append(cs.depInstallations, cs.InstallNodeJSDep)
-		cs.scenariosP = append(cs.scenariosP, filepath.Join(cs.e.RootPath, "policy-pack"))
-
+		cs.numOfPolicyRuntimes.Add(1)
+		cs.depInstallations = append(cs.depInstallations, cs.RunDependency(cs.InstallNodeJSDep, filepath.Join(cs.e.RootPath, "policy-pack")))
 	}
 
 	if Contains(dirs, "policy-pack-python") && cs.IsPicked(Python) {
+		cs.numOfPolicyRuntimes.Add(1)
 		cs.hasPythonPack = true
-		cs.depInstallations = append(cs.depInstallations, cs.InstallPythonDep)
-		cs.scenariosP = append(cs.scenariosP, filepath.Join(cs.e.RootPath, "policy-pack-python"))
+		cs.depInstallations = append(cs.depInstallations, cs.RunDependency(cs.InstallPythonDep, filepath.Join(cs.e.RootPath, "policy-pack-python")))
 
 	}
 }
 
-func (cs *Case) RunDepModules() {
+func (cs *Case) RunDepModules(ctx context.Context) {
 	wg := sync.WaitGroup{}
 	for _, f := range cs.depInstallations {
 		wg.Add(1)
-		go func(f_ func()) {
-			f_()
+		go func(f_ func(ctx context.Context)) {
+			f_(ctx)
 			wg.Done()
 		}(f)
 	}
 	wg.Wait()
+}
+
+func (cs *Case) RunScenarios() {
+	if cs.numOfPolicyRuntimes.Load() == 0 {
+		cs.t.Fatalf("no policies were detected but listening loop was started")
+	}
+	for scenarioPath := range cs.policyRuntimesQueue {
+		cs.RunScenario(scenarioPath)
+
+		if cs.numOfPolicyRuntimes.Add(-1) == 0 {
+			break
+		}
+	}
+	close(cs.policyRuntimesDone)
 }
 
 func CloneEnvWithPath(e *ptesting.Environment, cwd string) *ptesting.Environment {
@@ -217,7 +243,7 @@ func (cs *Case) InstallPythonVenvOnce() {
 	})
 }
 
-func (cs *Case) InstallTestComponent() {
+func (cs *Case) InstallTestComponent(ctx context.Context) {
 	testComponentDir := filepath.Join(cs.e.RootPath, "testcomponent")
 
 	e := CloneEnvWithPath(cs.e, testComponentDir)
@@ -266,8 +292,7 @@ func (cs *Case) CreateStack() {
 	abortIfFailed(cs.t)
 }
 
-func (cs *Case) InstallPythonDep() {
-
+func (cs *Case) InstallPythonDep(ctx context.Context) {
 	e := CloneEnv(cs.e)
 
 	cs.InstallPythonVenvOnce()
@@ -285,7 +310,7 @@ func (cs *Case) InstallPythonDep() {
 	abortIfFailed(cs.t)
 }
 
-func (cs *Case) InstallNodeJSDep() {
+func (cs *Case) InstallNodeJSDep(ctx context.Context) {
 
 	YarnPriorityMutex.LockRegular()
 	defer YarnPriorityMutex.UnlockRegular()
@@ -432,7 +457,11 @@ func (cs *Case) Run() {
 	e.ImportDirectory(rootDir)
 
 	cs.FindModules()
-	cs.RunDepModules()
+	if cs.numOfPolicyRuntimes.Load() == 0 {
+		return // TODO prevent situation when we have no policies picked
+	}
+
+	cs.RunDepModules(context.TODO())
 
 	// Change to the Pulumi program directory.
 	cs.programDir = filepath.Join(e.RootPath, "program")
@@ -440,6 +469,7 @@ func (cs *Case) Run() {
 
 	cs.CreateStack()
 	cs.InstallProgram()
+	go cs.RunScenarios()
 
 	// After this point, we want be sure to cleanup the stack, so we don't accidentally leak
 	// any cloud resources.
@@ -450,8 +480,9 @@ func (cs *Case) Run() {
 	}()
 
 	assert.True(cs.t, len(cs.scenarios) > 0, "no test scenarios provided")
-	for _, scenarioPath := range cs.scenariosP {
-		cs.RunScenario(scenarioPath)
+
+	select {
+	case <-cs.policyRuntimesDone:
 	}
 
 	e.T = cs.t
