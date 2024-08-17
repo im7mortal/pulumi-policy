@@ -187,11 +187,11 @@ func (cs *Case) RunDepModules() {
 	wg.Wait()
 }
 
-func CopyEnv(e *ptesting.Environment) *ptesting.Environment {
+func CloneEnvWithPath(e *ptesting.Environment, cwd string) *ptesting.Environment {
 	return &ptesting.Environment{
 		T:                   e.T,
 		RootPath:            e.RootPath,
-		CWD:                 e.CWD,
+		CWD:                 cwd,
 		Backend:             e.Backend,
 		Env:                 e.Env,
 		Passphrase:          e.Passphrase,
@@ -199,7 +199,10 @@ func CopyEnv(e *ptesting.Environment) *ptesting.Environment {
 		UseLocalPulumiBuild: e.UseLocalPulumiBuild,
 		Stdin:               e.Stdin,
 	}
+}
 
+func CloneEnv(e *ptesting.Environment) *ptesting.Environment {
+	return CloneEnvWithPath(e, e.CWD)
 }
 
 func (cs *Case) InstallPythonVenvOnce() {
@@ -212,10 +215,9 @@ func (cs *Case) InstallPythonVenvOnce() {
 func (cs *Case) InstallTestComponent() {
 	testComponentDir := filepath.Join(cs.e.RootPath, "testcomponent")
 
-	e := CopyEnv(cs.e)
+	e := CloneEnvWithPath(cs.e, testComponentDir)
 
 	// Install dependencies.
-	e.CWD = testComponentDir
 	e.RunCommand("go", "mod", "tidy")
 	abortIfFailed(cs.t)
 
@@ -244,7 +246,7 @@ func (cs *Case) InstallProgram() {
 
 func (cs *Case) InstallPythonDep() {
 
-	e := CopyEnv(cs.e)
+	e := CloneEnv(cs.e)
 
 	cs.InstallPythonVenvOnce()
 	pythonPackDir := filepath.Join(e.RootPath, "policy-pack-python")
@@ -265,7 +267,7 @@ func (cs *Case) InstallNodeJSDep() {
 
 	YarnPriorityMutex.LockRegular()
 	defer YarnPriorityMutex.UnlockRegular()
-	e := CopyEnv(cs.e)
+	e := CloneEnv(cs.e)
 	// Change to the Policy Pack directory.
 	packDir := filepath.Join(e.RootPath, "policy-pack")
 	e.CWD = packDir
