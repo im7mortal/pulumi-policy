@@ -77,7 +77,7 @@ func getCmdArgs(isPython bool, policyPackDirectoryPath string) (string, []string
 	return cmd, args
 }
 
-type Case struct {
+type PolicyTestCase struct {
 	t             *testing.T
 	testDirName   string
 	runtime       Runtime
@@ -103,7 +103,7 @@ func NewCase(
 	t *testing.T, testDirName string, runtime Runtime,
 	initialConfig map[string]string, scenarios []policyTestScenario,
 ) {
-	cs := Case{
+	p := PolicyTestCase{
 		t:                   t,
 		testDirName:         testDirName,
 		runtime:             runtime,
@@ -112,7 +112,7 @@ func NewCase(
 		policyRuntimesQueue: make(chan string, 5),
 		policyRuntimesDone:  make(chan struct{}),
 	}
-	cs.Run()
+	p.Run()
 }
 
 func GetDirectories(path string) ([]string, error) {
@@ -140,7 +140,7 @@ func Contains(slice []string, target string) bool {
 	return false
 }
 
-func (cs *Case) IsPicked(language Runtime) bool {
+func (p *PolicyTestCase) IsPicked(language Runtime) bool {
 	env := os.Getenv("POLICY_RUNTIMES")
 	// run all runtimes
 	if env == "" {
@@ -157,17 +157,17 @@ func (cs *Case) IsPicked(language Runtime) bool {
 	return false
 }
 
-func (cs *Case) RunDependency(f func(ctx context.Context), path string) func(ctx context.Context) {
+func (p *PolicyTestCase) RunDependency(f func(ctx context.Context), path string) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		f(ctx)
-		cs.policyRuntimesQueue <- path
+		p.policyRuntimesQueue <- path
 	}
 }
 
 // MainWorkflowByRuntime ensure that policy installation will be in the same workflow as program
 // it they both use the same runtime language
-func (cs *Case) MainWorkflowByRuntime(r Runtime, f func(ctx context.Context)) func(ctx context.Context) {
-	if cs.runtime == r {
+func (p *PolicyTestCase) MainWorkflowByRuntime(r Runtime, f func(ctx context.Context)) func(ctx context.Context) {
+	if p.runtime == r {
 		return f
 	}
 	return func(ctx context.Context) {}
@@ -184,52 +184,52 @@ func CreateWorkflow(f ...func(ctx context.Context)) func(ctx context.Context) {
 
 type Workflow func(ctx context.Context)
 
-func (cs *Case) FindModules() {
+func (p *PolicyTestCase) FindModules() {
 
-	dirs, _ := GetDirectories(cs.testDirName)
+	dirs, _ := GetDirectories(p.testDirName)
 
-	if cs.testDirName == "runtime_data" {
+	if p.testDirName == "runtime_data" {
 		fmt.Println(strings.Join(dirs, " LOL "))
 	}
 
 	mainProgramWorkflow := CreateWorkflow(
-		cs.CreateStack,
-		cs.InstallProgram,
-		cs.TestComponentInstallation(dirs),
-		cs.RunScenarios,
+		p.CreateStack,
+		p.InstallProgram,
+		p.TestComponentInstallation(dirs),
+		p.RunScenarios,
 	)
 
-	cs.depInstallations = []Workflow{
+	p.depInstallations = []Workflow{
 		CreateWorkflow(
-			cs.NodeJSPolicyWorkflow(dirs)), // NodeJS policy library mast be installed before program so it could be linked
-		cs.MainWorkflowByRuntime(NodeJS, mainProgramWorkflow),
+			p.NodeJSPolicyWorkflow(dirs)), // NodeJS policy library mast be installed before program so it could be linked
+		p.MainWorkflowByRuntime(NodeJS, mainProgramWorkflow),
 		CreateWorkflow(
-			cs.MainWorkflowByRuntime(Python, mainProgramWorkflow),
-			cs.PythonPolicyWorkflow(dirs)),
+			p.MainWorkflowByRuntime(Python, mainProgramWorkflow),
+			p.PythonPolicyWorkflow(dirs)),
 	}
 }
 
-func (cs *Case) RunDepModules(ctx context.Context) {
-	for _, f := range cs.depInstallations {
+func (p *PolicyTestCase) RunDepModules(ctx context.Context) {
+	for _, f := range p.depInstallations {
 		go func(f_ func(ctx context.Context)) {
 			f_(ctx)
 		}(f)
 	}
 }
 
-func (cs *Case) RunScenarios(ctx context.Context) {
-	if cs.numOfPolicyRuntimes.Load() == 0 {
-		cs.t.Fatalf("no policies were detected but listening loop was started")
+func (p *PolicyTestCase) RunScenarios(ctx context.Context) {
+	if p.numOfPolicyRuntimes.Load() == 0 {
+		p.t.Fatalf("no policies were detected but listening loop was started")
 	}
 	go func() {
-		for scenarioPath := range cs.policyRuntimesQueue {
-			cs.RunScenario(scenarioPath)
+		for scenarioPath := range p.policyRuntimesQueue {
+			p.RunScenario(scenarioPath)
 
-			if cs.numOfPolicyRuntimes.Add(-1) == 0 {
+			if p.numOfPolicyRuntimes.Add(-1) == 0 {
 				break
 			}
 		}
-		close(cs.policyRuntimesDone)
+		close(p.policyRuntimesDone)
 	}()
 }
 
@@ -251,122 +251,122 @@ func CloneEnv(e *ptesting.Environment) *ptesting.Environment {
 	return CloneEnvWithPath(e, e.CWD)
 }
 
-func (cs *Case) InstallPythonVenvOnce() {
-	cs.pythonVenv.Do(func() {
-		cs.e.RunCommand("pipenv", "--python", "3")
-		abortIfFailed(cs.t)
+func (p *PolicyTestCase) InstallPythonVenvOnce() {
+	p.pythonVenv.Do(func() {
+		p.e.RunCommand("pipenv", "--python", "3")
+		abortIfFailed(p.t)
 	})
 }
 
-func (cs *Case) InstallProgram(ctx context.Context) {
-	e := CloneEnvWithPath(cs.e, cs.programDir)
-	switch cs.runtime {
+func (p *PolicyTestCase) InstallProgram(ctx context.Context) {
+	e := CloneEnvWithPath(p.e, p.programDir)
+	switch p.runtime {
 	case NodeJS:
 		e.RunCommand("yarn", "install")
-		abortIfFailed(cs.t)
+		abortIfFailed(p.t)
 
 	case Python:
-		cs.InstallPythonVenvOnce()
+		p.InstallPythonVenvOnce()
 		e.RunCommand("pipenv", "run", "pip", "install", "-r", "requirements.txt")
-		abortIfFailed(cs.t)
+		abortIfFailed(p.t)
 
 	default:
-		cs.t.Fatalf("Unexpected runtime value.")
+		p.t.Fatalf("Unexpected runtime value.")
 	}
 
 	// Initial configuration.
-	for k, v := range cs.initialConfig {
+	for k, v := range p.initialConfig {
 		e.RunCommand("pulumi", "config", "set", k, v)
 	}
 
 }
 
-func (cs *Case) CreateStack(ctx context.Context) {
-	e := CloneEnvWithPath(cs.e, cs.programDir)
+func (p *PolicyTestCase) CreateStack(ctx context.Context) {
+	e := CloneEnvWithPath(p.e, p.programDir)
 	// Create the stack.
 	e.RunCommand("pulumi", "login", "--local")
-	abortIfFailed(cs.t)
+	abortIfFailed(p.t)
 
-	e.RunCommand("pulumi", "stack", "init", cs.stackName)
-	abortIfFailed(cs.t)
+	e.RunCommand("pulumi", "stack", "init", p.stackName)
+	abortIfFailed(p.t)
 }
 
-func (cs *Case) DestroyStack() {
-	e := CloneEnvWithPath(cs.e, cs.programDir)
-	cs.t.Log("Cleaning up Stack")
+func (p *PolicyTestCase) DestroyStack() {
+	e := CloneEnvWithPath(p.e, p.programDir)
+	p.t.Log("Cleaning up Stack")
 	e.RunCommand("pulumi", "destroy", "--yes")
 	e.RunCommand("pulumi", "stack", "rm", "--yes")
 }
 
-func (cs *Case) PythonPolicyWorkflow(dirs []string) func(ctx context.Context) {
-	if Contains(dirs, "policy-pack-python") && cs.IsPicked(Python) {
-		cs.numOfPolicyRuntimes.Add(1)
-		cs.hasPythonPack = true
-		return cs.RunDependency(cs.InstallPythonDep, filepath.Join(cs.e.RootPath, "policy-pack-python"))
+func (p *PolicyTestCase) PythonPolicyWorkflow(dirs []string) func(ctx context.Context) {
+	if Contains(dirs, "policy-pack-python") && p.IsPicked(Python) {
+		p.numOfPolicyRuntimes.Add(1)
+		p.hasPythonPack = true
+		return p.RunDependency(p.InstallPythonDep, filepath.Join(p.e.RootPath, "policy-pack-python"))
 	}
 	return func(ctx context.Context) {}
 }
 
-func (cs *Case) NodeJSPolicyWorkflow(dirs []string) func(ctx context.Context) {
-	if Contains(dirs, "policy-pack") && cs.IsPicked(NodeJS) {
-		cs.numOfPolicyRuntimes.Add(1)
-		return cs.RunDependency(cs.InstallNodeJSDep, filepath.Join(cs.e.RootPath, "policy-pack"))
+func (p *PolicyTestCase) NodeJSPolicyWorkflow(dirs []string) func(ctx context.Context) {
+	if Contains(dirs, "policy-pack") && p.IsPicked(NodeJS) {
+		p.numOfPolicyRuntimes.Add(1)
+		return p.RunDependency(p.InstallNodeJSDep, filepath.Join(p.e.RootPath, "policy-pack"))
 	}
 	return func(ctx context.Context) {}
 }
 
-func (cs *Case) TestComponentInstallation(dirs []string) func(ctx context.Context) {
+func (p *PolicyTestCase) TestComponentInstallation(dirs []string) func(ctx context.Context) {
 	if Contains(dirs, "testcomponent") {
 		return func(ctx context.Context) {
-			testComponentDir := filepath.Join(cs.e.RootPath, "testcomponent")
+			testComponentDir := filepath.Join(p.e.RootPath, "testcomponent")
 
-			e := CloneEnvWithPath(cs.e, testComponentDir)
+			e := CloneEnvWithPath(p.e, testComponentDir)
 
 			// Install dependencies.
 			e.RunCommand("go", "mod", "tidy")
-			abortIfFailed(cs.t)
+			abortIfFailed(p.t)
 
 			// Set the PATH envvar to the path to the testcomponent so the provider is available
 			// to the program.
-			cs.e.Env = []string{pathEnvWith(testComponentDir)}
+			p.e.Env = []string{pathEnvWith(testComponentDir)}
 		}
 
 	}
 	return func(ctx context.Context) {}
 }
 
-func (cs *Case) InstallPythonDep(ctx context.Context) {
-	e := CloneEnv(cs.e)
+func (p *PolicyTestCase) InstallPythonDep(ctx context.Context) {
+	e := CloneEnv(p.e)
 
-	cs.InstallPythonVenvOnce()
+	p.InstallPythonVenvOnce()
 	pythonPackDir := filepath.Join(e.RootPath, "policy-pack-python")
 	pythonPackRequirements := filepath.Join(pythonPackDir, "requirements.txt")
 	if _, err := os.Stat(pythonPackRequirements); !os.IsNotExist(err) {
 		e.RunCommand("pipenv", "run", "pip", "install", "-r", pythonPackRequirements)
-		abortIfFailed(cs.t)
+		abortIfFailed(p.t)
 	}
 
 	dep := filepath.Join("..", "..", "sdk", "python", "env", "src")
 	dep, err := filepath.Abs(dep)
-	assert.NoError(cs.t, err)
+	assert.NoError(p.t, err)
 	e.RunCommand("pipenv", "run", "pip", "install", "-e", dep)
-	abortIfFailed(cs.t)
+	abortIfFailed(p.t)
 }
 
-func (cs *Case) InstallNodeJSDep(ctx context.Context) {
+func (p *PolicyTestCase) InstallNodeJSDep(ctx context.Context) {
 
-	e := CloneEnv(cs.e)
+	e := CloneEnv(p.e)
 	// Change to the Policy Pack directory.
 	packDir := filepath.Join(e.RootPath, "policy-pack")
 	e.CWD = packDir
 
 	// Link @pulumi/policy.
 	e.RunCommand("yarn", "link", "@pulumi/policy")
-	abortIfFailed(cs.t)
+	abortIfFailed(p.t)
 
 	// Get dependencies.
 	e.RunCommand("yarn", "install")
-	abortIfFailed(cs.t)
+	abortIfFailed(p.t)
 }
 
 func runPolicyPackIntegrationTest(
@@ -388,23 +388,23 @@ func runPolicyPackIntegrationTest(
 	NewCase(t, testDirName, runtime, initialConfig, scenarios)
 }
 
-func (cs *Case) CheckPolicyPackConfig(scenario policyTestScenario) (args []string) {
+func (p *PolicyTestCase) CheckPolicyPackConfig(scenario policyTestScenario) (args []string) {
 
 	if len(scenario.PolicyPackConfig) > 0 {
 		// Marshal the config to JSON, with indentation for easier debugging.
 		bytes, err := json.MarshalIndent(scenario.PolicyPackConfig, "", "    ")
 		if err != nil {
-			cs.t.Fatalf("error marshalling policy config to JSON: %v", err)
+			p.t.Fatalf("error marshalling policy config to JSON: %v", err)
 		}
 
 		// Change to the config directory.
-		configDir := filepath.Join(cs.e.RootPath, "config", scenario.Name)
-		e := CloneEnvWithPath(cs.e, configDir)
+		configDir := filepath.Join(p.e.RootPath, "config", scenario.Name)
+		e := CloneEnvWithPath(p.e, configDir)
 
 		// Write the JSON to a file.
 		filename := "policy-config.json"
 		e.WriteTestFile(filename, string(bytes))
-		abortIfFailed(cs.t)
+		abortIfFailed(p.t)
 
 		// Add the policy config argument.
 		policyConfigFile := filepath.Join(configDir, filename)
@@ -413,9 +413,9 @@ func (cs *Case) CheckPolicyPackConfig(scenario policyTestScenario) (args []strin
 	return
 }
 
-func (cs *Case) RunScenario(policyPackDirectoryPath string) {
-	e := CloneEnvWithPath(cs.e, cs.programDir)
-	cs.t.Run(policyPackDirectoryPath, func(t *testing.T) {
+func (p *PolicyTestCase) RunScenario(policyPackDirectoryPath string) {
+	e := CloneEnvWithPath(p.e, p.programDir)
+	p.t.Run(policyPackDirectoryPath, func(t *testing.T) {
 		e.T = t
 
 		// Clean up the stack after running through the scenarios, so that subsequent runs
@@ -425,7 +425,7 @@ func (cs *Case) RunScenario(policyPackDirectoryPath string) {
 			abortIfFailed(t)
 		}()
 
-		for idx, scenario := range cs.scenarios {
+		for idx, scenario := range p.scenarios {
 			// Create a sub-test so go test will output data incrementally, which will let
 			// a CI system like Travis know not to kill the job if no output is sent after 10m.
 			// idx+1 to make it 1-indexed.
@@ -435,11 +435,11 @@ func (cs *Case) RunScenario(policyPackDirectoryPath string) {
 
 				e.RunCommand("pulumi", "config", "set", "scenario", fmt.Sprintf("%d", idx+1))
 
-				cmd, args := getCmdArgs(cs.runtime == Python || cs.hasPythonPack, policyPackDirectoryPath)
+				cmd, args := getCmdArgs(p.runtime == Python || p.hasPythonPack, policyPackDirectoryPath)
 
 				// If there is config for the scenario, write it out to a file and pass the file path
 				// as a --policy-pack-config argument.
-				args = append(args, cs.CheckPolicyPackConfig(scenario)...)
+				args = append(args, p.CheckPolicyPackConfig(scenario)...)
 
 				if len(scenario.WantErrors) == 0 {
 					t.Log("No errors are expected.")
@@ -471,11 +471,11 @@ func (cs *Case) RunScenario(policyPackDirectoryPath string) {
 }
 
 // CancelIfTestFailed checks if test failed every 100 milliseconds to ensure select will be released
-func (cs *Case) CancelIfTestFailed(ctx context.Context) context.Context {
+func (p *PolicyTestCase) CancelIfTestFailed(ctx context.Context) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		for {
-			if cs.t.Failed() || ctx.Err() != nil {
+			if p.t.Failed() || ctx.Err() != nil {
 				cancel()
 				return
 			}
@@ -485,54 +485,54 @@ func (cs *Case) CancelIfTestFailed(ctx context.Context) context.Context {
 	return ctx
 }
 
-func (cs *Case) Run() {
-	cs.t.Logf("Running Policy Pack Integration Test from directory %q", cs.testDirName)
+func (p *PolicyTestCase) Run() {
+	p.t.Logf("Running Policy Pack Integration Test from directory %q", p.testDirName)
 
-	assert.True(cs.t, len(cs.scenarios) > 0, "no test scenarios provided")
+	assert.True(p.t, len(p.scenarios) > 0, "no test scenarios provided")
 
-	ctx := cs.CancelIfTestFailed(context.Background())
+	ctx := p.CancelIfTestFailed(context.Background())
 
 	// Get the directory for the policy pack to run.
 	cwd, err := os.Getwd()
 	if err != nil {
-		cs.t.Fatalf("Error getting working directory")
+		p.t.Fatalf("Error getting working directory")
 	}
-	rootDir := filepath.Join(cwd, cs.testDirName)
+	rootDir := filepath.Join(cwd, p.testDirName)
 
 	// The Pulumi project name matches the test dir name in these tests.
-	os.Setenv("PULUMI_TEST_PROJECT", cs.testDirName)
+	os.Setenv("PULUMI_TEST_PROJECT", p.testDirName)
 
-	cs.stackName = fmt.Sprintf("%s-%d", cs.testDirName, time.Now().Unix()%100000)
-	os.Setenv("PULUMI_TEST_STACK", cs.stackName)
+	p.stackName = fmt.Sprintf("%s-%d", p.testDirName, time.Now().Unix()%100000)
+	os.Setenv("PULUMI_TEST_STACK", p.stackName)
 
 	// Copy the root directory to /tmp and run various operations within that directory.
 
-	cs.e = ptesting.NewEnvironment(cs.t)
+	p.e = ptesting.NewEnvironment(p.t)
 	defer func() {
-		if !cs.t.Failed() {
-			cs.e.DeleteEnvironment()
+		if !p.t.Failed() {
+			p.e.DeleteEnvironment()
 		}
 	}()
-	cs.e.ImportDirectory(rootDir)
-	cs.programDir = filepath.Join(cs.e.RootPath, "program")
+	p.e.ImportDirectory(rootDir)
+	p.programDir = filepath.Join(p.e.RootPath, "program")
 
-	cs.FindModules()
-	assert.False(cs.t, cs.numOfPolicyRuntimes.Load() == 0, "no policy runtimes were discovered")
-	if cs.numOfPolicyRuntimes.Load() == 0 {
+	p.FindModules()
+	assert.False(p.t, p.numOfPolicyRuntimes.Load() == 0, "no policy runtimes were discovered")
+	if p.numOfPolicyRuntimes.Load() == 0 {
 		return
 	}
 
-	cs.RunDepModules(context.TODO())
+	p.RunDepModules(context.TODO())
 
-	defer cs.DestroyStack()
+	defer p.DestroyStack()
 
 	// wait till all workflow finishes
 	select {
-	case <-cs.policyRuntimesDone:
+	case <-p.policyRuntimesDone:
 	case <-ctx.Done():
 	}
 
-	cs.t.Log("Finished test scenarios.")
+	p.t.Log("Finished test scenarios.")
 	// Cleanup already registered via defer.
 }
 
