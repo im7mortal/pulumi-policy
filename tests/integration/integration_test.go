@@ -37,6 +37,8 @@ type Runtime string
 const (
 	NodeJS Runtime = "nodejs"
 	Python Runtime = "python"
+	Golang Runtime = "golang"
+	Dotnet Runtime = "dotnet"
 )
 
 func abortIfFailed(t *testing.T) {
