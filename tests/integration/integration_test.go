@@ -470,10 +470,27 @@ func (cs *Case) RunScenario(policyPackDirectoryPath string) {
 	})
 }
 
+// CancelIfTestFailed checks if test failed every 100 milliseconds to ensure select will be released
+func (cs *Case) CancelIfTestFailed(ctx context.Context) context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			if cs.t.Failed() || ctx.Err() != nil {
+				cancel()
+				return
+			}
+			time.Sleep(time.Millisecond * 100)
+		}
+	}()
+	return ctx
+}
+
 func (cs *Case) Run() {
 	cs.t.Logf("Running Policy Pack Integration Test from directory %q", cs.testDirName)
 
 	assert.True(cs.t, len(cs.scenarios) > 0, "no test scenarios provided")
+
+	ctx := cs.CancelIfTestFailed(context.Background())
 
 	// Get the directory for the policy pack to run.
 	cwd, err := os.Getwd()
@@ -500,7 +517,10 @@ func (cs *Case) Run() {
 	cs.programDir = filepath.Join(cs.e.RootPath, "program")
 
 	cs.FindModules()
-	assert.True(cs.t, cs.numOfPolicyRuntimes.Load() == 0, "no policy runtimes were discovered")
+	assert.False(cs.t, cs.numOfPolicyRuntimes.Load() == 0, "no policy runtimes were discovered")
+	if cs.numOfPolicyRuntimes.Load() == 0 {
+		return
+	}
 
 	cs.RunDepModules(context.TODO())
 
@@ -509,6 +529,7 @@ func (cs *Case) Run() {
 	// wait till all workflow finishes
 	select {
 	case <-cs.policyRuntimesDone:
+	case <-ctx.Done():
 	}
 
 	cs.t.Log("Finished test scenarios.")
