@@ -1,0 +1,14 @@
+.pulumi
+**/bin/
+**/node_modules/
+vendor/
+**/Pulumi.*.yaml
+**/yarn-error.log
+**/yarn.lock
+.idea
+**/Pipfile.lock
+ci-scripts
+
+# integration run files
+tests/integration/Dockerfile
+tests/integration/run.sh
