@@ -17,6 +17,9 @@ print_help() {
     echo "                             Default is 'master'"
     echo "  --testprocs NUM            Set the number of concurrent test processes (GOMAXPROCS)"
     echo "                             Default is '12'"
+    echo "  --timeout DURATION         Set the timeout duration."
+    echo "                             Must be in Go time duration format (e.g., 30m, 2h)."
+    echo "                             The default is '60m'."
     echo "  --runtimes RUNTIMES        Set the runtimes as a comma-separated string (e.g., 'go,python')"
     echo "                             Available runtimes: golang, python, nodejs, dotnet."
     echo "                             If not set, it runs all runtimes."
@@ -41,6 +44,7 @@ while [[ "$#" -gt 0 ]]; do
         --pulumi) append_arg "PULUMI_VERSION=$2"; shift 2 ;;
         --pulumictl) append_arg "PULUMICTL_TAG=$2"; shift 2 ;;
         --testprocs) append_env "GOMAXPROCS=$2"; shift 2 ;;
+        --timeout) append_env "TEST_TIMEOUT=$2"; shift 2 ;;
         --runtimes) append_env "RUNTIMES=$2"; shift 2 ;;
         --help) print_help; exit 0 ;;
         *) print_help; exit 1 ;;

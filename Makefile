@@ -2,6 +2,9 @@ PROJECT_NAME := policy
 SUB_PROJECTS := sdk/nodejs/policy sdk/python
 include build/common.mk
 
+# Default timeout value
+TEST_TIMEOUT ?= 30m
+
 .PHONY: ensure
 ensure::
 	# Golang dependencies for the integration tests.
@@ -14,5 +17,4 @@ publish_packages:
 
 .PHONY: test_all
 test_all::
-	cd ./tests/integration && go test . -v -timeout 30m
-
+	cd ./tests/integration && go test . -v -timeout $(TEST_TIMEOUT)

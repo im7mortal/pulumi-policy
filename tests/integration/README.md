@@ -23,12 +23,14 @@ You can control the test environment by passing options to the `run.sh` script.
   found [here](https://github.com/pulumi/pulumictl/tags).
 - `--testprocs NUM`: Set the number of concurrent test processes (`GOMAXPROCS`). Defaults to
   `12`.
+  - `--timeout DURATION`: Set the test timeout duration. Must be in Go time duration format (e.g., 30m, 2h).
+  Defaults to 60m.
 - `--runtimes RUNTIMES`: Set the runtimes as a comma-separated string (e.g., `go,python`).
   Available runtimes: `golang`, `python`, `nodejs`, `dotnet`. If not set, it runs all runtimes.
 - `--help`: Show usage information.
 ### Example
 ```bash
-./run.sh --podman --runtimes python,nodejs --testprocs 8 --pulumi 3.112.0 --pulumictl v0.0.42
+./run.sh --podman --runtimes python,nodejs --testprocs 8 --timeout 30m --pulumi 3.112.0 --pulumictl v0.0.42
 ```
 This example command:
 - Uses Podman instead of Docker.

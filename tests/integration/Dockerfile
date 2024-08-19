@@ -19,11 +19,16 @@ RUN git clone https://github.com/pulumi/pulumictl.git --branch $PULUMICTL_TAG . 
 
 WORKDIR /app
 
+COPY . .
+
 # golang testing library use GOMAXPROCS to decide on number of parallel tests
 ENV GOMAXPROCS=12
 
-COPY . .
+# TEST_TIMEOUT env set's timeout for `go test` in Makefile under `test_all` target
+ENV TEST_TIMEOUT="30m"
+
 CMD ["make", "ensure", "only_build", "only_test_fast", "test_all"]
+
 
 
 ## Following section for active development of integration tests runner
