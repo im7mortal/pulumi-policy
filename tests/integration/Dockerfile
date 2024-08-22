@@ -1,21 +1,11 @@
 ARG PULUMI_VERSION="latest"
-FROM registry.hub.docker.com/pulumi/pulumi:$PULUMI_VERSION
+FROM registry.hub.docker.com/pulumi/pulumi-provider-build-environment:$PULUMI_VERSION
 
 # Override Pulumi's default entrypoint
 ENTRYPOINT []
 
 # Install pipenv for Python dependency management
-RUN apt-get update && \
-    apt-get install -y python3-pip && \
-    pip install pipenv && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install pulumictl
-ARG PULUMICTL_TAG=master
-WORKDIR /pulumictl
-RUN git clone https://github.com/pulumi/pulumictl.git --branch $PULUMICTL_TAG . && \
-    make install
+RUN pip install pipenv
 
 WORKDIR /app
 
